@@ -9,7 +9,7 @@
 
 int main(int argc, char *argv[]) {
     int i, j, nt=nt0, N=N0, M=M0, MTH=MT0, L=2*N+1, verbose=0;
-    double p8=p80, T0=16e-8, t0; srand(time(NULL));
+    double p8=p80, T0=6e-7, t0; srand(time(NULL));
     for(i = 1; i < argc; i++ ) {
         if (!strcmp(argv[i],"-h") || !strcmp(argv[i],"--help")) {
             printf("Usage:\n");

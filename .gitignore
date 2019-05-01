@@ -1,0 +1,8 @@
+*~
+*.out
+*.eps
+*.jpeg
+*.pdf
+*.swp
+*.tar*
+green/*

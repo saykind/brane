@@ -1,9 +1,9 @@
 #define nt0 2
 #define N0 15
-#define MT0 2e3
-#define M0 6e3
-#define d0 1.5
-#define p80 1.5    // changes from 0 to pi
+#define MT0 1e3
+#define M0 4e3
+#define d0 1.7
+#define p80 .3    // changes from 0 to pi
 
 #ifndef M_PI
 #define M_PI (3.14159265358979323846)

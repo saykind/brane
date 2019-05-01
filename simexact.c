@@ -13,7 +13,7 @@ int simulate(double p8, int N, double complex **h, double complex **S, double **
     int k1 = rand()%L-N, k2 = rand()%L-N, q1, q2;
     if (!k1 && !k2) {simulate(p8, N, h, S, g, g2, c); return 0;}
     
-    double A = a*a*(k1*k1+k2*k2), d = d0/A/pow(1+p8*p8/a/a/(k1*k1+k2*k2),.2); A = A*A;
+    double A = 4*(sin(a*k1/2)*sin(a*k1/2)+sin(a*k2/2)*sin(a*k2/2)), d = d0/A/pow(1+sin(p8)*sin(p8)/A,.18); A = A*A;
     double complex **dS = (double complex **)malloc(L*sizeof(double complex*));
     double complex **SE = (double complex **)malloc(L*sizeof(double complex*));                         // exact
     double complex **dSE= (double complex **)malloc(L*sizeof(double complex*));                         // exact
@@ -33,23 +33,25 @@ int simulate(double p8, int N, double complex **h, double complex **S, double **
             int p1, p2;                                                                                 // exact
             for (p1 = -N; p1 < N+1; p1++)                                                               // exact
                 for (p2 = -N; p2 < N+1; p2++) {                                                         // exact
-                    SE[(q1+L)%L][(q2+L)%L] += a*a*(p1*q2-p2*q1)*(p1*q2-p2*q1)/(q1*q1+q2*q2)*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
+                    double p = (sin(a*p1)*sin(a*q2)-sin(a*p2)*sin(a*q1))*(sin(a*p1)*sin(a*q2)-sin(a*p2)*sin(a*q1))/(sin(a*q1)*sin(a*q1)+sin(a*q2)*sin(a*q2));
+                    SE[(q1+L)%L][(q2+L)%L] += p*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
                 }                                                                                       // exact
             dSE[(q1+L)%L][(q2+L)%L] = -SE[(q1+L)%L][(q2+L)%L];                                          // exact
             int kq1 = (L-k1-q1)%L < N+1 ? (L-k1-q1)%L : (L-k1-q1)%L-L;
             int kq2 = (L-k2-q2)%L < N+1 ? (L-k2-q2)%L : (L-k2-q2)%L-L;
             int qk1 = (L+k1-q1)%L < N+1 ? (L+k1-q1)%L : (L+k1-q1)%L-L;
             int qk2 = (L+k2-q2)%L < N+1 ? (L+k2-q2)%L : (L+k2-q2)%L-L;
+            double p = (sin(a*k1)*sin(a*q2)-sin(a*k2)*sin(a*q1))*(sin(a*k1)*sin(a*q2)-sin(a*k2)*sin(a*q1));
             double complex s;
-            s  =  (k1*q2-k2*q1) * (k1*q2-k2*q1) *( conj(h[(k1+q1+L)%L][(k2+q2+L)%L])*z );
-            s += (kq1*q2-kq2*q1)*(kq1*q2-kq2*q1)*( h[(L-k1-q1)%L][(L-k2-q2)%L]*z   );
-            s += (qk1*q2-qk2*q1)*(qk1*q2-qk2*q1)*( h[(k1-q1+L)%L][(k2-q2+L)%L]*conj(z) );
-            s +=  (k1*q2-k2*q1) * (k1*q2-k2*q1) *( conj(h[(q1-k1+L)%L][(q2-k2+L)%L])*conj(z) );
+            s  =  p*( conj(h[(k1+q1+L)%L][(k2+q2+L)%L])*z );
+            s += (sin(a*kq1)*sin(a*q2)-sin(a*kq2)*sin(a*q1))*(sin(a*kq1)*sin(a*q2)-sin(a*kq2)*sin(a*q1))*( h[(L-k1-q1)%L][(L-k2-q2)%L]*z   );
+            s += (sin(a*qk1)*sin(a*q2)-sin(a*qk2)*sin(a*q1))*(sin(a*qk1)*sin(a*q2)-sin(a*qk2)*sin(a*q1))*( h[(k1-q1+L)%L][(k2-q2+L)%L]*conj(z) );
+            s +=  p*( conj(h[(q1-k1+L)%L][(q2-k2+L)%L])*conj(z) );
             if (!((q1+2*k1)%L) && !((q2+2*k2)%L))
-                s += (k1*q2-k2*q1)*(k1*q2-k2*q1)*z*z*d;
+                s += p*z*z*d;
             if (!((q1-2*k1+2*L)%L) && !((q2-2*k2+2*L)%L))
-                s += (k1*q2-k2*q1)*(k1*q2-k2*q1)*conj(z)*conj(z)*d;
-            s *= a*a*d/(q1*q1+q2*q2);
+                s += p*conj(z)*conj(z)*d;
+            s *= d/(sin(a*q1)*sin(a*q1)+sin(a*q2)*sin(a*q2));
             dS[(q1+L)%L][(q2+L)%L] = s;
             w += creal( (2*S[(q1+L)%L][(q2+L)%L]+s)*conj(s) );
         }
@@ -79,8 +81,9 @@ int simulate(double p8, int N, double complex **h, double complex **S, double **
                 int p1, p2;                                                                             // exact
                 for (p1 = -N; p1 < N+1; p1++)                                                           // exact
                     for (p2 = -N; p2 < N+1; p2++) {                                                     // exact
-                        SE[(q1+L)%L][(q2+L)%L] += a*a*(p1*q2-p2*q1)*(p1*q2-p2*q1)/(q1*q1+q2*q2)*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
-                        dSE[(q1+L)%L][(q2+L)%L] += a*a*(p1*q2-p2*q1)*(p1*q2-p2*q1)/(q1*q1+q2*q2)*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
+                        double p = (sin(a*p1)*sin(a*q2)-sin(a*p2)*sin(a*q1))*(sin(a*p1)*sin(a*q2)-sin(a*p2)*sin(a*q1))/(sin(a*q1)*sin(a*q1)+sin(a*q2)*sin(a*q2));
+                        SE[(q1+L)%L][(q2+L)%L] += p*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
+                        dSE[(q1+L)%L][(q2+L)%L] += p*h[(p1+L)%L][(p2+L)%L]*conj(h[(p1+q1+L)%L][(p2+q2+L)%L]);
                     }                                                                                   // exact
                 if (cabs(dSE[(q1+L)%L][(q2+L)%L]-dS[(q1+L)%L][(q2+L)%L]) > 1e-12)                       // exact
                     printf("(%d,%d)[%d,%d] dSE =\t%.7lf+%.7lfi\tdSE-dS =\t%.15lf\n",\
