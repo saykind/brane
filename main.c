@@ -114,10 +114,7 @@ int main(int argc, char *argv[]) {
     PRINT_NOW
 
     /* Data dump */
-    dump(N, h, S, g, c, C, px);
-
-    /* Print Poisson ratio */
-    printf("\nPR = %lf\n\n", calcPR(N, N8, g, c, C, px, SN));
+    dump(N, N8, h, S, g, c, C, px, SN);
 
     /* Memory de-allocation */ 
     for (i = 0; i < L; i++) 

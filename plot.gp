@@ -19,7 +19,7 @@ list=system('ls -1B eta/N=*')
 plot 16*sin(x/2)**4 lw 4 lt 2 lc rgb "red", .55*x**3.3 lw 4 lt 2 lc rgb "red", for [file in list] file pt 7 ps .4 t file
 
 # fit
-p8=.32
+p8=.30
 file='eta/fit'
 set output sprintf("fit.pdf")
 set fit errorvariables

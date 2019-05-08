@@ -21,6 +21,6 @@
 int init(int N, double complex **h, double **g, int ***c, int *C, double *px, double *SN, double **Q);
 int calcS(int N, double complex **h, double complex **S, double *SN, double **Q);
 double calcPR(int N, int N8, double **g, int ***c, int C, double *px, double *SN);
-int dump(int N, double complex **h, double complex **S, double **g, int ***c, int C, double *px);
+int dump(int N, int N8, double complex **h, double complex **S, double **g, int ***c, int C, double *px, double *SN);
 int simulate(double Y, int N, int n, double complex **h, double complex **S, double complex **dS, double **g, int ***c, double *SN, double **Q);
 

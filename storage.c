@@ -58,7 +58,7 @@ int calcS(int N, double complex **h, double complex **S, double *SN, double **Q)
     return 0;
 }
 
-int dump(int N, double complex **h, double complex **S, double **g, int ***c, int C, double *px) {    
+int dump(int N, int N8, double complex **h, double complex **S, double **g, int ***c, int C, double *px, double *SN) {    
     int L=2*N+1, i, q1, q2;
     double a = 2*pi/L;
     char name[20];
@@ -92,6 +92,15 @@ int dump(int N, double complex **h, double complex **S, double **g, int ***c, in
     }
     fclose(file);
     fclose(fite);
+
+    /* Print Poisson ratio */
+    sprintf(name, "pr.dat");
+    file = fopen(name, "a");
+    if (!file) {printf("Cannot save data\n"); return -1;}
+    double pr = calcPR(N, N8, g, c, C, px, SN);
+    fprintf(file,"%d\t%.14lf\n", N8, pr);
+    printf("\nPR = %lf\n\n", pr);
+    fclose(file);
 
 /*
     mkdir("3d", 0777);
