@@ -11,7 +11,7 @@ int simulate(double Y, int N, int n, double complex **h, double complex **S, dou
     int k1 = rand()%l-n, k2 = rand()%l-n, q1, q2;
     if (!k1 && !k2) {simulate(Y, N, n, h, S, dS, g, c, SN, Q); return 0;}
     if (k1 < 0) k1 += L; if (k2 < 0) k2 += L;
-    double w = 0, A = Q[k1][k2], d = d0/A/pow(1+Y/A,.17); A *= A;
+    double w = 0, A = Q[k1][k2], d = d0/A/pow(1+Y/A,.13); A *= A;
 
     double complex z = (1.*rand()/RAND_MAX-.5) + (1.*rand()/RAND_MAX-.5)*I;
     #pragma omp parallel for collapse(2) reduction(+:w)

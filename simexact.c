@@ -11,7 +11,7 @@ int simulate(double Y, int N, int n, double complex **h, double complex **S, dou
     int k1 = rand()%l-n, k2 = rand()%l-n, q1, q2;
     if (!k1 && !k2) {simulate(Y, N, n, h, S, dS, g, c, SN, Q); return 0;}
     if (k1 < 0) k1 += L; if (k2 < 0) k2 += L;
-    double w = 0, A = Q[k1][k2], d = d0/A/pow(1+Y/A,.17); A *= A;
+    double w = 0, A = Q[k1][k2], d = d0/A/pow(1+Y/A,.13); A *= A;
 
     double complex **SE = (double complex **)malloc(L*sizeof(double complex*));                         // exact
     double complex **dSE= (double complex **)malloc(L*sizeof(double complex*));                         // exact
@@ -86,7 +86,7 @@ int simulate(double Y, int N, int n, double complex **h, double complex **S, dou
         for (q1 = 0; q1 < L; q1++)                                                                      // exact
             for (q2 = 0; q2 < L; q2++)                                                                  // exact
                 E -= .5*A*creal(h[q1][q2]*conj(h[q1][q2]))+(Y/L/L)*creal(SE[q1][q2]*conj(SE[q1][q2]));  // exact
-        printf("(%d,%d)\tE =\t%.7lf\tE-w =\t%.15lf\n", k1, k2, E, E- w);                                 // exact
+        printf("(%d,%d)\tE =\t%.7lf\tE-w =\t%.15lf\n", k1, k2, E, E- w);                                // exact
     }
     if (c && g) {
         double a = creal(h[k1][k2]*conj(h[k1][k2]));
@@ -99,6 +99,4 @@ int simulate(double Y, int N, int n, double complex **h, double complex **S, dou
     free(SE); free(dSE);                                                                                // exact
     return 0;
 }
-//    printf("(%d)\t%lf\t%lf\n", k1, sin(a*k1), SN[(k1+L)%L]);
-//    printf("(%d,%d)\t%lf\t%lf\n\n", k1, k2, 4*(sin(a*k1/2)*sin(a*k1/2)+sin(a*k2/2)*sin(a*k2/2)), Q[(k1+L)%L][(k2+L)%L]);
 

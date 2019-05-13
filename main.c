@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
         calcS(N, h, S, SN, Q);
         t0 = omp_get_wtime();
         PRINT_NOW	    
-        printf("MTH =\t%d*%d\test: %.0f/%d min\n", MTH, l*l, T0*MTH*l*l*L*L/60, nt );
+        printf("MTH =\t%d*%d\test: %.0f min\n", MTH, l*l, T0*MTH*l*l*L*L/60/nt );
         for (i = 0; i < MTH; i++) {
             for (j = 0; j < l*l; j++)
                 simulate(Y, N, n, h, S, dS, NULL, NULL, SN, Q);
@@ -90,10 +90,10 @@ int main(int argc, char *argv[]) {
         printf("\ntime =\t%.2lf min\n", (omp_get_wtime()-t0)/60);
     }
     /* Monte Carlo average */ 
-    calcS(N, h, S, SN, Q);   
+    if (M) calcS(N, h, S, SN, Q);   
     t0 = omp_get_wtime();
     PRINT_NOW
-    printf("M =\t%d*%d\test: %.0f/%d min\n", M, l*l, T0*M*l*l*L*L/60, nt);
+    printf("M =\t%d*%d\test: %.0f min\n", M, l*l, T0*M*l*l*L*L/60/nt);
     for (i = 0; i < M; i++) {    
         for (j = 0; j < l*l; j++)
             simulate(Y, N, n, h, S, dS, g, c, SN, Q);

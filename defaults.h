@@ -2,7 +2,7 @@
 #define N0 40
 #define MT0 300
 #define M0 700
-#define d0 2.1
+#define d0 2.6
 #define p80 .3    // effectively changes from 0 to pi
 
 #ifndef M_PI

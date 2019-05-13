@@ -83,12 +83,16 @@ int dump(int N, int N8, double complex **h, double complex **S, double **g, int 
     FILE *fite = fopen(name, "a"); 
     if (!file || !fite) {printf("Cannot save data\n"); return -1;}
     for (i = 1; i < N+1; i++) {
-        fprintf(file,"%.14lf\t%.14lf\n", i*a, c[1][0][i]/g[0][i]);
-        fprintf(file,"%.14lf\t%.14lf\n", i*a, c[1][i][0]/g[i][0]);
-        fprintf(file,"%.14lf\t%.14lf\n", i*a*sqrt(2), c[1][i][i]/g[i][i]);
-        fprintf(fite,"%.14lf\t%.14lf\n", i*a, c[1][0][i]/g[0][i]);
-        fprintf(fite,"%.14lf\t%.14lf\n", i*a, c[1][i][0]/g[i][0]);
-        fprintf(fite,"%.14lf\t%.14lf\n", i*a*sqrt(2), c[1][i][i]/g[i][i]);
+        double x = i*a, gy = c[1][0][i]/g[0][i], gx = c[1][i][0]/g[i][0], gr = c[1][i][i]/g[i][i], gR = c[1][i][(L-i)%L]/g[i][(L-i)%L];
+        fprintf(file,"%.14lf\t%.14lf\n", x, gy);
+        fprintf(file,"%.14lf\t%.14lf\n", x, gx);
+        fprintf(file,"%.14lf\t%.14lf\n", x*sqrt(2), gr);
+        fprintf(file,"%.14lf\t%.14lf\n", x*sqrt(2), gR);
+        if (i < 3) continue;
+        fprintf(fite,"%.14lf\t%.14lf\n", x, gy);
+        fprintf(fite,"%.14lf\t%.14lf\n", x, gx);
+        fprintf(fite,"%.14lf\t%.14lf\n", x*sqrt(2), gr);
+        fprintf(fite,"%.14lf\t%.14lf\n", x*sqrt(2), gR);
     }
     fclose(file);
     fclose(fite);
