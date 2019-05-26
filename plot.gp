@@ -5,7 +5,7 @@ set terminal pdf enhanced color font 'Helvetica, 20' size 21 cm, 14.8 cm dashed
 
 # picture
 set grid
-set xrange [ pi/200 : 1.5*pi ]
+set xrange [ pi/250 : 1.5*pi ]
 set logscale xy
 set xlabel "q" 
 set key box notitle right bottom spacing 1.2
@@ -29,22 +29,22 @@ file='eta/fit'
 set output sprintf("fit.pdf")
 set fit errorvariables
 f(x) = x**4*(a*p8/x)**h
-fit2 = 0.13
+fit2 = 0.11
 fit1 = .5*fit2
 fit [ fit1 : fit2 ] x**4*(a*p8/x)**h file via a, h
 #print "\neta=",h
 #print "a  =",a,"\n"
 
-set xrange [ pi/60 : 1 ]
+set xrange [ pi/70 : .9 ]
 set label 1 sprintf("eta\t= %.2f +/- %.2f", h, 3*h_err) at .102,.6
 set label 2 sprintf("a\t= %.2f +/- %.2f", a, 3*a_err) at .102,.2
-set label 3 sprintf("---|") at fit2,.0005 right
-set label 4 sprintf("|---") at fit1,.0005 left
+set label 3 sprintf("---|") at fit2,.0003 right
+set label 4 sprintf("|---") at fit1,.0003 left
 set title sprintf("Inverse Green (p8 = %.2f)", p8)
-plot x**4 lw 4 lt 2 lc rgb "red", f(x) lw 4 lt 2 lc rgb "red", file  pt 7 ps .3 t file 
+plot x**4 lw 4 lt 2 lc rgb "red", f(x) lw 4 lt 2 lc rgb "red" t sprintf("x**4*(a*p8/x)**eta"), file  pt 7 ps .3 t file 
 
-fit1=0.1
-fit2=0.35
+fit1=0.075
+fit2=0.25
 m=1000
 step=(fit2-fit1)/m
 fitcmd(i) = sprintf("fit [ .7*(fit1+step*%d) : fit1+step*%d ] x**4*(a*p8/x)**h file via a, h", i, i)
