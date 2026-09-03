@@ -118,12 +118,15 @@ direction, not just axes/diagonals).
 ```bash
 uv run tools/explore.py            # sweeps N and p8, writes data/explore.{png,csv}
 uv run tools/explore.py --quick    # small/fast grids
+uv run tools/heatmap.py            # 2D colormap eta(N, p8), data/heatmap.{png,csv}
 ```
 
-Produces `η` vs `N` (fixed `p8`) and `η` vs `p8` (fixed `N`). Both trends are
-*measurement/window* effects — the effective η rises toward the universal
-`0.78` as the accessible window widens (larger `L`, or larger `p8` moving the
-crossover up); the true exponent is unchanged.
+Produces `η` vs `N` (fixed `p8`), `η` vs `p8` (fixed `N`), and a 2D `η(N,p8)`
+colormap. The trends are *measurement/window* effects — the effective η rises
+toward the universal `0.78` as the accessible window widens (larger `L`, or
+larger `p8` moving the crossover up); the true exponent is unchanged. The
+colormap's contour orientation shows which knob dominates at a given size:
+near-vertical contours mean p8/window-limited, horizontal means finite-size.
 
 ### Multi-size sweep (finite-size study, thesis-style)
 
@@ -221,6 +224,7 @@ tests/
 tools/
   analyze.py        eta extraction (plateau/windowed/crossover) + plot
   explore.py        eta vs N and eta vs p8 sweeps
+  heatmap.py        2D colormap of eta over the (N, p8) plane
   bench.sh          legacy-vs-new throughput benchmark
   scaling.py        core-scaling benchmark (table + plot)
 docs/
