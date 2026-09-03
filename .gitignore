@@ -13,3 +13,6 @@ eta/
 fit.log
 .DS_Store
 __pycache__/
+.venv/
+pr.dat
+fita.dat

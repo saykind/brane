@@ -26,22 +26,24 @@ make
 # 3. Run the default simulation (N=36, p8=0.4, ~52 s on 16 cores):
 ./brane -v
 
-# 4. Extract eta and plot the inverse Green function:
-python3 tools/analyze.py data/N=36.dat
+# 4. Set up the Python analysis env (once) and extract eta + plot:
+uv sync
+uv run tools/analyze.py data/N=36.dat
 ```
 
 Expected default output: acceptance ≈ 50 %, and `analyze.py` reporting
-`eta ≈ 0.75`.
+`eta ≈ 0.75` plus a PNG of the inverse Green function.
 
 ### Dependencies
 
 | Tool | Needed for | Install |
 |------|-----------|---------|
 | `libomp` | multithreading (Apple clang) | `brew install libomp` |
-| `python3` + `numpy` | η fit (`tools/analyze.py`) | numpy ships with the system python; else `pip3 install numpy` |
-| `matplotlib` | PNG plots (optional) | `pip3 install matplotlib` — otherwise a gnuplot script is emitted |
-| `gnuplot` | plot fallback (optional) | already installed |
+| `uv` + `pyproject.toml` | Python analysis env (numpy + matplotlib) | `uv sync` (uv via `brew install uv`) |
+| `gnuplot` | plot fallback if matplotlib is absent | optional, already installed |
 
+Without `uv` you can still fit η with the system `python3`+`numpy`
+(`python3 tools/analyze.py …`); plots then fall back to gnuplot.
 On Linux with GCC no `libomp` is needed: `make CC=gcc`.
 
 ---
@@ -106,10 +108,35 @@ automatically.
 ```bash
 make test
 ```
-
 `tests/test_correctness.c` runs the chain, then recomputes `S_q` from scratch
 and checks it against the incrementally-maintained array (agreement `< 4e-14`)
 plus the reality condition `h_{−q} = conj(h_q)`.
+
+## Benchmark
+
+```bash
+./tools/bench.sh          # legacy vs new, single-mode updates/sec
+```
+
+Representative result at `N=40` on the 16-core M4 Max (raw update throughput,
+directly comparable across parallelization strategies):
+
+| run | time (s) | chains | updates/sec |
+|-----|---------:|-------:|------------:|
+| legacy nt=1  | 3.60 | 1  | 18,225 |
+| legacy nt=16 | 9.60 | 1  | 6,834  |
+| new nt=1     | 1.75 | 1  | 37,491 |
+| new nt=16    | 5.44 | 16 | **192,971** |
+
+- **Legacy gets *slower* with more threads** (nt=16 < nt=1): the original opens
+  an OpenMP `parallel for` inside the per-move routine, ~L² times per sweep, so
+  fork/join overhead dwarfs the tiny inner loop.
+- **New is ~2× faster serially** (contiguous arrays, PCG32, precomputed tables)
+  and **scales ~10.6× across 16 cores** via replica parallelism — about **28×**
+  the legacy threaded throughput.
+
+The legacy code is built (with a minimal OpenMP fix) by `legacy/build.sh`;
+the original only failed to compile because Apple clang needs libomp flags.
 
 ---
 
@@ -125,12 +152,14 @@ tests/
   test_correctness.c  incremental-vs-exact S_q validation
 tools/
   analyze.py        eta fit (numpy) + plot (matplotlib/gnuplot)
+  bench.sh          legacy-vs-new throughput benchmark
 docs/
   model.md          physics, algorithm, sources, acceleration roadmap
-legacy/             original thesis code, kept for reference
+legacy/             original thesis code (build.sh fixed for macOS libomp)
 example_data/       reference .dat files from the thesis runs (old format)
 lib/                method papers (Tröster; Los et al.)
 Makefile            OpenMP autodetection (macOS libomp / Linux gcc)
+pyproject.toml      Python analysis env (uv sync)
 run.sh              multi-size sweep
 ```
 
