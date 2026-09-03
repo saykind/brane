@@ -111,7 +111,12 @@ they only make it measurable:
    η is model-dependent and can be biased — indicative, not truth.
 
 All modes are rotationally averaged into `q_r=|q|` shells first (uses every
-direction, not just axes/diagonals).
+direction, not just axes/diagonals). To see the full 2D structure (and the
+lattice anisotropy) directly:
+
+```bash
+uv run tools/green_map.py data/N=40.dat   # heatmaps of G(qx,qy) and G^-1(qx,qy)
+```
 
 ### How η depends on N and p8
 
@@ -225,6 +230,7 @@ tools/
   analyze.py        eta extraction (plateau/windowed/crossover) + plot
   explore.py        eta vs N and eta vs p8 sweeps
   heatmap.py        2D colormap of eta over the (N, p8) plane
+  green_map.py      2D maps of G(qx,qy) and G^-1(qx,qy) over the BZ
   bench.sh          legacy-vs-new throughput benchmark
   scaling.py        core-scaling benchmark (table + plot)
 docs/
