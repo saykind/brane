@@ -128,12 +128,15 @@ directly comparable across parallelization strategies):
 | new nt=1     | 1.75 | 1  | 37,491 |
 | new nt=16    | 5.44 | 16 | **192,971** |
 
-- **Legacy gets *slower* with more threads** (nt=16 < nt=1): the original opens
-  an OpenMP `parallel for` inside the per-move routine, ~L² times per sweep, so
-  fork/join overhead dwarfs the tiny inner loop.
-- **New is ~2× faster serially** (contiguous arrays, PCG32, precomputed tables)
-  and **scales ~10.6× across 16 cores** via replica parallelism — about **28×**
-  the legacy threaded throughput.
+- **Legacy gets *slower* with more threads** (nt=16 is ~0.4× nt=1): the
+  original opens an OpenMP `parallel for` inside the per-move routine, ~L²
+  times per sweep, so fork/join overhead dwarfs the tiny inner loop.
+- **New vs legacy at the *same* 16 threads: ~28–30×.**
+- **New vs legacy serial (1 thread each): ~2×** (contiguous arrays, PCG32,
+  precomputed tables).
+- **New's own scaling from 1→16 threads: ~5.4×** (~34 % of the ideal 16×).
+  This M4 Max has 12 performance + 4 efficiency cores and each replica is
+  memory-bandwidth heavy, so replica scaling is sublinear but still large.
 
 The legacy code is built (with a minimal OpenMP fix) by `legacy/build.sh`;
 the original only failed to compile because Apple clang needs libomp flags.
