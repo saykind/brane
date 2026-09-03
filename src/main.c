@@ -27,7 +27,11 @@ static Config default_config(void) {
     c.N = 36;
     c.n = 0;              /* 0 => set to N later */
     c.p8 = 0.4;          /* ~ graphene at T=300 K (see chapters/overview.tex) */
-    c.nthreads = omp_get_max_threads();
+    /* Default to 12 replicas: on the M4 Max (12 P + 4 E cores) throughput
+     * peaks near the performance-core count; the E-cores gate the end-of-run
+     * barrier and add nothing (see tools/scaling.py). Capped by availability. */
+    int mx = omp_get_max_threads();
+    c.nthreads = mx < 12 ? mx : 12;
     c.therm = 80;
     c.sweeps = 80;
     c.meas_every = 1;
@@ -45,8 +49,7 @@ static void usage(const Config *d) {
     printf("  N=<int>           half lattice size, L=2N+1        (%d)\n", d->N);
     printf("  n=<int>           half move-zone size, l=2n+1      (=N)\n");
     printf("  p8=<float>        interaction strength, 0<p8<pi    (%.2f)\n", d->p8);
-    printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);
-    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
+    printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
     printf("  sweeps=<int>      measurement sweeps per replica   (%ld)\n", d->sweeps);
     printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);

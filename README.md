@@ -56,7 +56,7 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   N=<int>        half lattice size, L = 2N+1        (default 36)
   n=<int>        half move-zone size, l = 2n+1      (default N)
   p8=<float>     interaction strength, 0 < p8 < pi  (default 0.4)
-  nt=<int>       independent replicas / threads     (default = #cores)
+  nt=<int>       independent replicas / threads     (default 12)
   therm=<int>    thermalization sweeps per replica  (default 80)
   sweeps=<int>   measurement sweeps per replica     (default 80)
   meas=<int>     measure every M sweeps             (default 1)

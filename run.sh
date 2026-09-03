@@ -4,7 +4,7 @@
 # can be overlaid to check finite-size collapse of the inverse Green function.
 set -e
 P8=${P8:-0.4}
-NT=${NT:-$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)}
+NT=${NT:-12}   # throughput peaks near the P-core count on the M4 Max
 mkdir -p data
 for N in 20 24 28 32 36; do
     ./brane N=$N p8=$P8 nt=$NT therm=80 sweeps=120 out=data/N=$N.dat

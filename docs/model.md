@@ -78,7 +78,11 @@ anomalous scaling window that is accessible on a small lattice.
 - **Green function** `G(q) = ⟨|h_q|²⟩`. In the harmonic theory
   `G⁻¹(q) ∼ q⁴`; anomalous elasticity gives `G⁻¹(q) ∼ q^(4−η)` for `q ≪ p₈`.
   A straight-line fit of `log G⁻¹` vs `log q` in that window has slope
-  `(4 − η)`, so **`η = 4 − slope`** (`tools/analyze.py`).
+  `(4 − η)`, so **`η = 4 − slope`** (`tools/analyze.py`). Because the theory is
+  isotropic (`G` depends only on `q_r = |q|`), `analyze.py` **rotationally
+  averages** `G` over thin `q_r` annuli — using *all* `L²` modes and every
+  direction, not just the x/y axes and diagonals of the original thesis
+  analysis — which sharpens the fit.
 - **Poisson ratio** [thesis `mcmc.tex`]:
 
   ```
@@ -213,7 +217,10 @@ This is *not* described in the Tröster papers (they mention only "a parallel
 version... described elsewhere") — for equilibrium sampling it is the natural,
 robust choice. Combined with **contiguous flat arrays**, a **precomputed
 modulo/step/reciprocal table**, and a fast per-stream RNG, `brane` runs
-`N=36, p₈=0.4` in ~52 s on 16 cores and recovers `η ≈ 0.75`.
+`N=36, p₈=0.4` in ~52 s on 16 cores and recovers `η ≈ 0.75`. Throughput
+peaks near the 12 performance cores (the 4 efficiency cores gate the
+end-of-run barrier and add nothing — see `tools/scaling.py`), so the default
+replica count is **12**.
 
 ### 4.3 A genuinely new idea worth trying next (documented, not yet built)
 
