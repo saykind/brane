@@ -9,8 +9,8 @@ height field's Fourier modes `h_q`. It is a modernized, multi-threaded
 rewrite of the code behind the M.Sc. thesis (`η = 0.78 ± 0.02`,
 `ν = −0.76 ± 0.05`).
 
-For the physics, the algorithm, full literature sources, and the acceleration
-roadmap, see **[docs/model.md](docs/model.md)**.
+- **Thesis (full physics & derivations):** <https://saykind.github.io/thesis_msc/>
+- **This repo's physics/algorithm/sources:** **[docs/model.md](docs/model.md)**
 
 ---
 
@@ -31,8 +31,9 @@ uv sync
 uv run tools/analyze.py data/N=36.dat
 ```
 
-Expected default output: acceptance ≈ 50 %, and `analyze.py` reporting
-`eta ≈ 0.75` plus a PNG of the inverse Green function.
+Expected default output: acceptance ≈ 50 %, and `analyze.py` reporting a
+`plateau eta` (primary), a `windowed slope`, and a heuristic `crossover fit`,
+plus a two-panel PNG (inverse Green + effective exponent).
 
 ### Dependencies
 
@@ -92,6 +93,37 @@ they only make it measurable:
 ```bash
 ./brane N=36 p8=0.8 therm=80 sweeps=80   # wider window → η ≈ 0.74 in ~50 s
 ```
+
+### Extracting η (choosing the fit window)
+
+`tools/analyze.py` reports three estimates, from most to least principled:
+
+1. **plateau η** *(primary)* — η is *defined* as `4 − d ln G⁻¹/d ln q` as
+   `q→0`, so we average the **effective exponent** `η_eff(q)` over the flat part
+   of its profile. If `η_eff` has no plateau (large spread) the tool says
+   *"η ill-defined here"* rather than forcing a number. The right-hand panel of
+   the plot shows `η_eff(q)` so you can *see* the window and set `--qmin/--qmax`.
+2. **windowed slope** — straight log-log fit over the window (gives the error
+   bar); equals the plateau when the window is flat.
+3. **crossover fit** *(cross-check only)* — fit to the phenomenological ansatz
+   `G⁻¹ = C q⁴ (1 + (q₈/q)^η)` (the literature `κ(q)=κ₀[1+(q₈/q)^η]` form). It
+   matches both asymptotes but the crossover *shape* is not from theory, so its
+   η is model-dependent and can be biased — indicative, not truth.
+
+All modes are rotationally averaged into `q_r=|q|` shells first (uses every
+direction, not just axes/diagonals).
+
+### How η depends on N and p8
+
+```bash
+uv run tools/explore.py            # sweeps N and p8, writes data/explore.{png,csv}
+uv run tools/explore.py --quick    # small/fast grids
+```
+
+Produces `η` vs `N` (fixed `p8`) and `η` vs `p8` (fixed `N`). Both trends are
+*measurement/window* effects — the effective η rises toward the universal
+`0.78` as the accessible window widens (larger `L`, or larger `p8` moving the
+crossover up); the true exponent is unchanged.
 
 ### Multi-size sweep (finite-size study, thesis-style)
 
@@ -187,7 +219,8 @@ src/
 tests/
   test_correctness.c  incremental-vs-exact S_q validation
 tools/
-  analyze.py        eta fit (numpy) + plot (matplotlib/gnuplot)
+  analyze.py        eta extraction (plateau/windowed/crossover) + plot
+  explore.py        eta vs N and eta vs p8 sweeps
   bench.sh          legacy-vs-new throughput benchmark
   scaling.py        core-scaling benchmark (table + plot)
 docs/
