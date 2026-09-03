@@ -141,6 +141,26 @@ directly comparable across parallelization strategies):
 The legacy code is built (with a minimal OpenMP fix) by `legacy/build.sh`;
 the original only failed to compile because Apple clang needs libomp flags.
 
+### Core scaling
+
+```bash
+uv run tools/scaling.py --N 40      # table + data/scaling.png
+```
+
+Replica parallelism at N=40 on the M4 Max (12 P + 4 E cores): linear to ~2
+cores, then memory-bandwidth limited (each replica streams its own ~0.4 MB of
+arrays), plateauing around **12 threads**; the 4 E-cores add nothing and, due
+to the end-of-run barrier on the slowest replica, 16 threads is slightly worse
+than 12. Practical sweet spot for this size: **~10-12 threads**.
+
+| cores | speedup | efficiency |
+|------:|--------:|-----------:|
+| 2  | 2.00× | 100% |
+| 4  | 3.62× | 91% |
+| 8  | 4.79× | 60% |
+| 12 | 5.45× | 45% |
+| 16 | 5.08× | 32% |
+
 ---
 
 ## Project layout
@@ -156,6 +176,7 @@ tests/
 tools/
   analyze.py        eta fit (numpy) + plot (matplotlib/gnuplot)
   bench.sh          legacy-vs-new throughput benchmark
+  scaling.py        core-scaling benchmark (table + plot)
 docs/
   model.md          physics, algorithm, sources, acceleration roadmap
 legacy/             original thesis code (build.sh fixed for macOS libomp)

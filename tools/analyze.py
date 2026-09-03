@@ -32,9 +32,12 @@ import numpy as np
 def load(path):
     """Return (q1, q2, qmag, G, Ginv) and the header dict."""
     header = {}
+    saw_col_header = False
     with open(path) as f:
         for line in f:
             if line.startswith("#"):
+                if "qmag" in line and "Ginv" in line:
+                    saw_col_header = True
                 # parse "key=value" tokens from the first header line
                 for tok in line[1:].split():
                     if "=" in tok:
@@ -42,6 +45,15 @@ def load(path):
                         header[k] = v
                 continue
             break
+    if not saw_col_header:
+        sys.exit(
+            f"error: '{path}' is not a brane (new-format) output file.\n"
+            "  It looks like the legacy multi-line .dat format. The legacy\n"
+            "  binary (legacy/a.out) overwrites data/N=<N>.dat in that format.\n"
+            "  Regenerate with the new engine, e.g.:\n"
+            f"      ./brane N=40 p8=0.4 out={path}\n"
+            "  then re-run this analysis."
+        )
     data = np.loadtxt(path, comments="#")
     q1, q2 = data[:, 0], data[:, 1]
     qmag = data[:, 4]
