@@ -1,2 +1,142 @@
 # brane
-Monte Carlo simulations of 2D membrane
+
+**Fourier Monte Carlo simulation of a 2D crystalline membrane (graphene) in
+the flat phase.**
+
+`brane` measures the anomalous elasticity exponent **η** and the **Poisson
+ratio ν** of a thermally fluctuating 2D membrane by Metropolis sampling of the
+height field's Fourier modes `h_q`. It is a modernized, multi-threaded
+rewrite of the code behind the M.Sc. thesis (`η = 0.78 ± 0.02`,
+`ν = −0.76 ± 0.05`).
+
+For the physics, the algorithm, full literature sources, and the acceleration
+roadmap, see **[docs/model.md](docs/model.md)**.
+
+---
+
+## Quick start
+
+```bash
+# 1. One-time dependency (OpenMP runtime for Apple clang):
+brew install libomp
+
+# 2. Build:
+make
+
+# 3. Run the default simulation (N=36, p8=0.4, ~52 s on 16 cores):
+./brane -v
+
+# 4. Extract eta and plot the inverse Green function:
+python3 tools/analyze.py data/N=36.dat
+```
+
+Expected default output: acceptance ≈ 50 %, and `analyze.py` reporting
+`eta ≈ 0.75`.
+
+### Dependencies
+
+| Tool | Needed for | Install |
+|------|-----------|---------|
+| `libomp` | multithreading (Apple clang) | `brew install libomp` |
+| `python3` + `numpy` | η fit (`tools/analyze.py`) | numpy ships with the system python; else `pip3 install numpy` |
+| `matplotlib` | PNG plots (optional) | `pip3 install matplotlib` — otherwise a gnuplot script is emitted |
+| `gnuplot` | plot fallback (optional) | already installed |
+
+On Linux with GCC no `libomp` is needed: `make CC=gcc`.
+
+---
+
+## Usage
+
+```
+./brane [options]
+
+  N=<int>        half lattice size, L = 2N+1        (default 36)
+  n=<int>        half move-zone size, l = 2n+1      (default N)
+  p8=<float>     interaction strength, 0 < p8 < pi  (default 0.4)
+  nt=<int>       independent replicas / threads     (default = #cores)
+  therm=<int>    thermalization sweeps per replica  (default 80)
+  sweeps=<int>   measurement sweeps per replica     (default 80)
+  meas=<int>     measure every M sweeps             (default 1)
+  d0=<float>     base Metropolis step size          (default 2.6)
+  seed=<int>     base RNG seed (reproducible)       (default 12345)
+  out=<path>     output file (default data/N=<N>.dat)
+  -v             per-replica progress
+  -h             help
+```
+
+One **sweep** = `l·l` attempted single-mode updates. Total statistics =
+`nt × sweeps` measurements. Each replica is an independent Markov chain seeded
+by `(seed, replica_index)`, so runs are fully reproducible.
+
+### Reaching the anomalous regime on a small lattice
+
+`η` lives in the window `3·a ≲ q ≲ p8`. On a small lattice this window is
+narrow; widen it by raising `p8` (physical range up to ~π):
+
+```bash
+./brane N=36 p8=0.8 nt=16 therm=80 sweeps=80   # η ≈ 0.74 in ~50 s
+```
+
+### Multi-size sweep (finite-size study, thesis-style)
+
+```bash
+./run.sh            # N = 20…36, each well under a minute
+```
+
+---
+
+## Output format
+
+`data/N=<N>.dat` is a text table (one row per non-zero mode):
+
+```
+# Fourier MC membrane   N=36 L=73 p8=0.4000 samples=1280 nu=0.036500
+# q1 q2 qx qy qmag G Ginv
+q1  q2  qx  qy  |q|  G(q)=<|h_q|^2>  1/G(q)
+```
+
+The header carries `N, L, p8, samples, nu`; `tools/analyze.py` parses it
+automatically.
+
+---
+
+## Testing
+
+```bash
+make test
+```
+
+`tests/test_correctness.c` runs the chain, then recomputes `S_q` from scratch
+and checks it against the incrementally-maintained array (agreement `< 4e-14`)
+plus the reality condition `h_{−q} = conj(h_q)`.
+
+---
+
+## Project layout
+
+```
+src/
+  membrane.h        API, Config/Geometry/Replica/Result structs
+  membrane.c        core engine: geometry, incremental Metropolis, observables
+  main.c            CLI + replica-parallel driver + I/O
+  pcg.h             per-stream PCG32 RNG (reproducible, thread-safe)
+tests/
+  test_correctness.c  incremental-vs-exact S_q validation
+tools/
+  analyze.py        eta fit (numpy) + plot (matplotlib/gnuplot)
+docs/
+  model.md          physics, algorithm, sources, acceleration roadmap
+legacy/             original thesis code, kept for reference
+example_data/       reference .dat files from the thesis runs (old format)
+lib/                method papers (Tröster; Los et al.)
+Makefile            OpenMP autodetection (macOS libomp / Linux gcc)
+run.sh              multi-size sweep
+```
+
+## Notes
+
+- **η** is reliable at these sizes; **ν** is genuinely hard and needs large
+  `L` / long runs to stabilize (see docs/model.md §1.3, §3).
+- The original code lives in `legacy/` and is preserved for provenance; it
+  required `libomp` and used a single chain with an inner-loop `parallel for`.

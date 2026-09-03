@@ -1,9 +1,15 @@
 *~
+*.o
 *.out
 *.eps
 *.jpeg
 *.pdf
 *.swp
 *.tar*
+brane
+test_correctness
+data/
+eta/
 fit.log
-eta/*
+.DS_Store
+__pycache__/
