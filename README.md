@@ -73,11 +73,24 @@ by `(seed, replica_index)`, so runs are fully reproducible.
 
 ### Reaching the anomalous regime on a small lattice
 
-`η` lives in the window `3·a ≲ q ≲ p8`. On a small lattice this window is
-narrow; widen it by raising `p8` (physical range up to ~π):
+**η is a universal exponent — it does not depend on `p8`** (different papers at
+`p8 = 0.3…0.44` all report η ≈ 0.78–0.85). What `p8` sets is the *crossover
+scale* `q8 ∼ p8`: above it `G⁻¹ ∝ q⁴` (harmonic), below it `G⁻¹ ∝ q^(4−η)`
+(anomalous). A trustworthy fit needs a window that is below the crossover yet
+above finite-size effects,
+
+```
+    3·a  ≲  q  ≲  q8 ∼ p8 ,     a = 2π/L .
+```
+
+On a small lattice this window is narrow and sits in the crossover, so the fit
+returns a *biased effective exponent that undershoots* the true η. Widen the
+window — with larger `L` (lowers the floor `a`) or larger `p8` (raises the
+ceiling `q8`) — to expose more of the asymptotic regime. Neither changes η;
+they only make it measurable:
 
 ```bash
-./brane N=36 p8=0.8 nt=16 therm=80 sweeps=80   # η ≈ 0.74 in ~50 s
+./brane N=36 p8=0.8 therm=80 sweeps=80   # wider window → η ≈ 0.74 in ~50 s
 ```
 
 ### Multi-size sweep (finite-size study, thesis-style)
