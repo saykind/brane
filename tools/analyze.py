@@ -278,9 +278,19 @@ def fit_pooled(q, gi, ge):
     return 4.0 - coef[0], float(np.sqrt(cov[0, 0])), int(m.sum())
 
 
-def plot_combined(q, gi, ge, Ns, eta, err, p8, png):
+def plot_combined(q, gi, ge, Ns, eta, err, p8, png, bg=None, coupling=None):
     """Overlay every N's pooled points (colored by N) with the single combined
-    slope fit q^(4-eta)."""
+    slope fit q^(4-eta).
+
+    p8 is the fit-window ceiling (points are fit over [q.min, p8]); coupling, if
+    given, is the physical p8/q8 shown in the title (differs from the ceiling
+    when the fit is capped below the crossover, as for the legacy data).
+
+    If bg=(qbg, gibg) is given (full-Brillouin-zone radial averages, all q), it
+    is drawn faintly so the whole G^-1(q) curve is visible -- the windowed fit
+    region is shaded, and the q^4 / q^(4-eta) reference lines span the full q
+    range (dashed outside the fit window to show the fit is only claimed there).
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -289,6 +299,10 @@ def plot_combined(q, gi, ge, Ns, eta, err, p8, png):
         print("matplotlib missing; skipping combined plot.")
         return
     fig, ax = plt.subplots(figsize=(7.5, 6))
+    if bg is not None:
+        qbg, gibg = bg
+        ax.loglog(qbg, gibg, ".", ms=2, color="0.75", alpha=0.5, zorder=0,
+                  label="full BZ (all q)")
     uN = sorted(set(Ns.tolist()))
     cmap = plt.get_cmap("viridis")
     for i, n in enumerate(uN):
@@ -297,18 +311,31 @@ def plot_combined(q, gi, ge, Ns, eta, err, p8, png):
         ax.errorbar(q[s], gi[s], yerr=ge[s], fmt="o", ms=3.5, color=c,
                     ecolor=c, elinewidth=0.7, capsize=1.5, alpha=0.9,
                     label=f"N={n}")
-    qq = np.logspace(np.log10(q.min()), np.log10(q.max()), 200)
-    # anchor the reference lines at the pooled geometric mean
+    # reference lines: span the full plotted q-range if bg present, else window
+    qmax_ref = float(max(q.max(), bg[0].max())) if bg is not None else float(q.max())
+    qmin_ref = float(min(q.min(), bg[0].min())) if bg is not None else float(q.min())
+    qq = np.logspace(np.log10(qmin_ref), np.log10(qmax_ref), 300)
     q0 = float(np.exp(np.mean(np.log(q)))); g0 = float(np.exp(np.mean(np.log(gi))))
     ax.loglog(qq, g0 * (qq / q0) ** 4, "--", color="C3", lw=1.2,
               label=r"$q^4$ (harmonic)")
     if eta is not None:
-        ax.loglog(qq, g0 * (qq / q0) ** (4 - eta), "-", color="k", lw=2,
+        # solid inside the fit window, dashed (extrapolation) outside
+        inw = (qq >= q.min()) & (qq <= p8)
+        gline = g0 * (qq / q0) ** (4 - eta)
+        ax.loglog(qq[~inw], gline[~inw], ":", color="k", lw=1.2, alpha=0.6)
+        ax.loglog(qq[inw], gline[inw], "-", color="k", lw=2,
                   label=rf"combined fit $\eta={eta:.3f}\pm{err:.3f}$")
+        ax.axvspan(q.min(), p8, color="C1", alpha=0.10, label="fit window")
+        ax.axvline(p8, ls=":", color="C1", alpha=0.8)
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlabel(r"$q_r=|q|$"); ax.set_ylabel(r"$G^{-1}(q_r)$")
-    ax.set_title(rf"Combined multi-$N$ fit at $p_8={p8:.2f}$  "
-                 rf"({len(uN)} sizes, {len(q)} pts)")
+    if coupling is not None:
+        ttl = (rf"Combined multi-$N$ fit, $q_8\!\sim\!p_8={coupling:.2f}$, "
+               rf"window $q\leq{p8:.3f}$  ({len(uN)} sizes, {len(q)} pts)")
+    else:
+        ttl = (rf"Combined multi-$N$ fit at $p_8={p8:.2f}$  "
+               rf"({len(uN)} sizes, {len(q)} pts)")
+    ax.set_title(ttl)
     ax.legend(frameon=False, fontsize=8, ncol=2)
     ax.grid(True, which="both", alpha=0.3)
     fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
@@ -349,38 +376,49 @@ def combined_all(pattern="data/N*/p*/data.dat", nbins=60, outdir="plots/combined
     return rows
 
 
-def combined_legacy(pattern="example_data/N=*.dat", p8=0.3, nbins=40,
-                    outdir="plots/combined_legacy"):
+def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
+                    lo_frac=0.055 / 0.3, hi_frac=0.11 / 0.3,
+                    nbins=40, outdir="plots/combined_legacy"):
     """Combined multi-N pooled fit on the LEGACY large-N data (all files share
-    one physical coupling, default p8=0.3). Pools radial-averaged G^-1(q) from
-    every N -- each kept inside its own window [3 a_N, p8] -- into one weighted
-    log-log slope, mirroring the legacy 'eta/fit' scheme (which likewise pooled
-    axis+diagonal points for i>=3 across N), but using the full rotational
-    average instead of just axes/diagonals. Returns (eta, err, npts, nN)."""
+    one physical coupling, default p8=0.3, so q8~p8=0.3).
+
+    The anomalous law G^-1 ~ q^(4-eta) holds only for q << q8. Fitting up to q8
+    itself includes the crossover roll-off and biases the slope LOW (~0.68).
+    The legacy analysis (legacy/plot.gp) fits the model x^4*(a*p8/x)^eta -- a
+    pure power law q^(4-eta) -- over the window [0.055, 0.11] = [q8/5.5, q8/2.7],
+    well inside the plateau, and reports eta ~ 0.78. We reproduce that: pool the
+    radial-averaged G^-1(q) from every N over [lo_frac*q8, hi_frac*q8] (default
+    the legacy [0.055,0.11]) and fit one count-weighted log-log slope. Returns
+    (eta, err, npts, nN)."""
     import glob
     files = sorted(glob.glob(pattern),
                    key=lambda p: int(re.search(r"N=(\d+)", p).group(1)))
     if not files:
         sys.exit(f"no legacy files match {pattern}")
     os.makedirs(outdir, exist_ok=True)
+    lo, hi = lo_frac * p8, hi_frac * p8
     q, gi, ge, Ns = [], [], [], []
+    qbg, gibg = [], []                       # full-BZ background for the plot
     for f in files:
         qmag, G, N, L, a = load_legacy(f)
         qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins)
-        m = (qr >= 3 * a) & (qr <= p8) & (Ginv_r > 0) & np.isfinite(Ginv_r)
+        qbg.extend(qr); gibg.extend(Ginv_r)
+        m = (qr >= lo) & (qr <= hi) & (Ginv_r > 0) & np.isfinite(Ginv_r)
         q.extend(qr[m]); gi.extend(Ginv_r[m])
         ge.extend(Ginv_err[m]); Ns.extend([N] * int(m.sum()))
-        e1, s1, _ = plateau_eta(qr, Ginv_r, cnt, 3 * a, p8)
-        print(f"  N={N:3d}  a={a:.4f}  window=[{3*a:.3f},{p8}]  "
-              f"pts={int(m.sum())}  plateau_eta="
-              f"{'%.3f'%e1 if e1 is not None else 'n/a'}")
+        print(f"  N={N:3d}  a={a:.4f}  window=[{lo:.3f},{hi:.3f}]  "
+              f"pts={int(m.sum())}")
     q, gi, ge, Ns = map(np.array, (q, gi, ge, Ns))
+    qbg, gibg = np.array(qbg), np.array(gibg)
     eta, err, npts = fit_pooled(q, gi, ge)
     nN = len(set(Ns.tolist()))
-    print(f"\nCOMBINED (legacy, p8={p8}): eta = {eta:.3f} +/- {err:.3f}   "
+    print(f"\nCOMBINED (legacy, q8~p8={p8}, window=[{lo:.3f},{hi:.3f}]"
+          f"=[q8/{p8/lo:.1f}, q8/{p8/hi:.1f}]): "
+          f"eta = {eta:.3f} +/- {err:.3f}   "
           f"({nN} sizes N={Ns.min()}-{Ns.max()}, {npts} pts)")
-    plot_combined(q, gi, ge, Ns, eta, err, p8,
-                  os.path.join(outdir, "combined_legacy.png"))
+    plot_combined(q, gi, ge, Ns, eta, err, hi,
+                  os.path.join(outdir, "combined_legacy.png"),
+                  bg=(qbg, gibg), coupling=p8)
     return eta, err, npts, nN
 
 

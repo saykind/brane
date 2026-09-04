@@ -72,12 +72,25 @@ them falls back to the in-shell scatter for error bars.
 ```sh
 # combined multi-N pooled fit over all example_data files (one coupling):
 uv run tools/analyze.py --legacy                 # -> plots/combined_legacy/
-uv run tools/analyze.py --legacy --p8 0.3        # set the fit ceiling explicitly
+uv run tools/analyze.py --legacy --p8 0.3        # set the coupling (q8~p8) explicitly
 ```
 
 Because every file shares the same physical coupling, the anomalous law
 `G^-1 ~ q^(4-eta)` is size-independent, so the radially-averaged `G^-1(q)` points
-from all N collapse onto one curve and can be pooled — each cell restricted to its
-own window `[3a_N, p8]` — into a single inverse-variance-weighted log-log slope.
+from all N collapse onto one curve and can be pooled into a single log-log slope.
 The larger lattices reach smaller `q`, widening the fit range and tightening
-`eta`. On this dataset the pooled fit gives `eta ~ 0.72` at `p8 = 0.3`.
+`eta`.
+
+**Fit window matters.** The anomalous law holds only for `q << q8 ~ p8`; fitting
+all the way up to `q8` itself includes the crossover roll-off and biases the slope
+low (~0.68). The legacy analysis ([`legacy/plot.gp`](../legacy/plot.gp)) fits the
+model `x^4 * (a*p8/x)^eta` (a pure power law `q^(4-eta)`) over the window
+`[0.055, 0.11] = [q8/5.5, q8/2.7]`, well inside the plateau, and this is what our
+`--legacy` mode reproduces:
+
+```
+eta = 0.786 +/- 0.006   (11 sizes N=100-200, 68 pts, window q in [0.055,0.11])
+```
+
+consistent with the thesis value `eta = 0.78 +/- 0.02`.
+
