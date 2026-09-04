@@ -69,6 +69,13 @@ gcloud compute instances delete brane        # don't forget
 [`slurm_grid.sbatch`](slurm_grid.sbatch) is an array job: one task per `(N, p8)`
 cell, each using its allocated cores as replicas.
 
+## Option D — Apple Simcloud (ACS) — internal batch compute
+
+See **[`SIMCLOUD.md`](SIMCLOUD.md)** for the full guide. One job per `(N, p8)`
+cell via `simcloud batch post`; use the `mr2-as` M2 Ultra cluster (~3.6× faster
+per core than x86, near-linear scaling). Driver scripts: `simcloud_submit.sh`,
+`simcloud_fetch.sh`, `simcloud_bench_run.sh`.
+
 ```sh
 # edit NS / P8S and set --array=0-(len(NS)*len(P8S)-1), then:
 sbatch cloud/slurm_grid.sbatch
