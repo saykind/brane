@@ -55,7 +55,7 @@ static void usage(const Config *d) {
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
            (unsigned long long)d->seed);
-    printf("  out=<path>        output .dat file (default data/N=<N>.dat)\n");
+    printf("  out=<path>        output .dat file (default data/N<N>/p<p8>/data.dat)\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -124,9 +124,19 @@ int main(int argc, char *argv[]) {
     printf("Poisson ratio nu = %.4f\n", res.poisson);
 
     /* ---- write Green function G(q) and inverse Green G^{-1}(q) --------- */
-    if (!outpath[0]) {
-        system("mkdir -p data");
-        snprintf(outpath, sizeof(outpath), "data/N=%d.dat", cfg.N);
+    if (!outpath[0])
+        snprintf(outpath, sizeof(outpath), "data/N%d/p%.2f/data.dat", cfg.N, cfg.p8);
+    /* create the output directory (everything up to the last '/') */
+    {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "%s", outpath);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = '\0';
+            char cmd[600];
+            snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+            if (system(cmd)) { /* ignore */ }
+        }
     }
     FILE *f = fopen(outpath, "w");
     if (!f) { fprintf(stderr, "cannot write %s\n", outpath); return 1; }

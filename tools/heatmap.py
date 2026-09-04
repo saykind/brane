@@ -9,7 +9,7 @@ Interpretation guide:
   * horizontal/diagonal contours (eta rises with N) -> genuine finite-size
     convergence toward the universal eta ~ 0.78.
 
-Each (N, p8) cell is saved as data/hm_N<N>_p<p8>.dat, so runs accumulate on
+Each (N, p8) cell is saved as data/N<N>/p<p8>/data.dat, so runs accumulate on
 disk; --replot-all combines every cell present. eta is measured exactly as in
 analyze.py: rotationally average G(q_r), then a weighted log-log slope over the
 window [3a, max(p8, 5a)].
@@ -39,14 +39,15 @@ def measure_file(path):
 
 
 def run_and_measure(N, p8, nt, therm, sweeps):
-    out = f"data/hm_N{N}_p{int(round(p8*100)):03d}.dat"
+    out = f"data/N{N}/p{p8:.2f}/data.dat"
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     subprocess.run(["./brane", f"N={N}", f"p8={p8}", f"nt={nt}",
                     f"therm={therm}", f"sweeps={sweeps}", f"out={out}"],
                    check=True, capture_output=True, text=True)
     return measure_file(out)
 
 
-def collect_all(pattern="data/hm_*.dat"):
+def collect_all(pattern="data/N*/p*/data.dat"):
     """Gather (N, p8, eta) from every cell file on disk (combines all runs)."""
     import glob
     pts = []
@@ -124,7 +125,7 @@ def main():
     ap.add_argument("--sweeps", type=int, default=60)
     ap.add_argument("--png", default="plots/heatmap.png")
     ap.add_argument("--replot-all", action="store_true",
-                    help="replot EVERY data/hm_*.dat cell on disk (combine all runs)")
+                    help="replot EVERY data/N*/p*/data.dat cell on disk (combine all runs)")
     ap.add_argument("--refine", type=int, default=0,
                     help="triangulation subdivisions for a smoother map (no new sims)")
     args = ap.parse_args()

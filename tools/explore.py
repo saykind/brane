@@ -32,7 +32,8 @@ import analyze  # same directory
 
 
 def run_sim(N, p8, nt, therm, sweeps, seed=12345):
-    out = f"data/explore_N{N}_p{int(round(p8*100)):03d}.dat"
+    out = f"data/N{N}/p{p8:.2f}/data.dat"
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     subprocess.run(["./brane", f"N={N}", f"p8={p8}", f"nt={nt}",
                     f"therm={therm}", f"sweeps={sweeps}", f"seed={seed}",
                     f"out={out}"], check=True, capture_output=True, text=True)

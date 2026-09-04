@@ -270,10 +270,12 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
                   f"   q8={cross['q8']:.3f}   [heuristic ansatz, cross-check only]")
         print(f"Poisson ratio  : {header.get('nu','?')}  (from simulation)")
 
-    os.makedirs("plots", exist_ok=True)
-    base = os.path.splitext(os.path.basename(datfile))[0]
-    png = png or f"plots/{base}.png"
-    gp = f"plots/{base}.gp"
+    # mirror the data subpath: data/N40/p0.40/data.dat -> plots/N40/p0.40/
+    d = os.path.dirname(datfile)
+    pdir = ("plots" + d[len("data"):]) if (d == "data" or d.startswith("data/")) else "plots"
+    os.makedirs(pdir, exist_ok=True)
+    png = png or os.path.join(pdir, "fit.png")
+    gp = os.path.join(pdir, "fit.gp")
     plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, datfile)
     return dict(N=int(header.get("N", 0)), p8=p8, png=png,
                 eta_plateau=eta_p, eta_plateau_spread=spread_p,
@@ -291,8 +293,8 @@ def main():
                     help="upper q for crossover fit (avoid lattice UV)")
     ap.add_argument("--png", default=None)
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/hm_*.dat",
-                    help="batch-analyze every matching file (default data/hm_*.dat)")
+    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/data.dat",
+                    help="batch-analyze every matching file (default data/N*/p*/data.dat)")
     args = ap.parse_args()
 
     if args.all:

@@ -82,9 +82,11 @@ def render(datfile, png=None):
         ax.set_xlabel(r"$q_x$"); ax.set_ylabel(r"$q_y$")
 
     fig.tight_layout()
-    os.makedirs("plots", exist_ok=True)
-    base = os.path.splitext(os.path.basename(datfile))[0]
-    png = png or f"plots/{base}_green.png"
+    # mirror the data subpath: data/N40/p0.40/data.dat -> plots/N40/p0.40/green.png
+    d = os.path.dirname(datfile)
+    pdir = ("plots" + d[len("data"):]) if (d == "data" or d.startswith("data/")) else "plots"
+    os.makedirs(pdir, exist_ok=True)
+    png = png or os.path.join(pdir, "green.png")
     fig.savefig(png, dpi=140)
     plt.close(fig)
     return png
@@ -95,8 +97,8 @@ def main():
     ap.add_argument("datfile", nargs="?",
                     help="a .dat file; omit with --all")
     ap.add_argument("--png", default=None)
-    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/hm_*.dat",
-                    help="batch-render every matching file (default data/hm_*.dat)")
+    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/data.dat",
+                    help="batch-render every matching file (default data/N*/p*/data.dat)")
     args = ap.parse_args()
 
     try:
