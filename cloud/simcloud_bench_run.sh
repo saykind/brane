@@ -15,7 +15,8 @@ TIMEOUT="${TIMEOUT:-5m}"           # cap only; job exits as soon as the bench fi
 NET="${NET:-}"                     # Denali VPC network id (required on Apple Silicon)
 TOOLCHAIN="${TOOLCHAIN:-1}"        # 1=ship build-essential bundle; 0=SMI already has gcc (AS)
 # group quota is required for >20 cpus; derive the simcloud username (not $USER)
-scuser="$(simcloud -q user info -f '{{.Username}}' 2>/dev/null || simcloud -q user info 2>/dev/null | awk '/^Username:/{print $2}')"
+scuser="$(simcloud -q -c mr2 user info 2>/dev/null | awk -F': *' '/^Username:/{print $2; exit}')"
+[ -z "$scuser" ] && scuser="${USER}"
 OWNER="${OWNER:-hw:others:$scuser}"
 
 # what to probe (passed through to simcloud_bench.sh)
