@@ -108,6 +108,9 @@ typedef struct {
  * yet measurable (need >= 2 replicas with measurements). */
 double   delta2_rel_error(const Replica *reps, int nreps, const Geometry *geo);
 
+/* Mean over replicas of Delta2 = sum_q <|h_q|^2> (for tracking thermalization). */
+double   delta2_mean(const Replica *reps, int nreps, const Geometry *geo);
+
 Result   result_reduce(const Replica *reps, int nreps, const Geometry *geo);
 void     result_free(Result *res);
 

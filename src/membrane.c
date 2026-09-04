@@ -243,6 +243,21 @@ static double replica_poisson(const Replica *rep) {
     return (var != 0.0) ? -cov / var : 0.0;
 }
 
+/* Mean over replicas of Delta2 = sum_q <|h_q|^2> (the quantity whose relative
+ * error the adaptive driver converges). Useful for tracking thermalization. */
+double delta2_mean(const Replica *reps, int nreps, const Geometry *geo) {
+    int L = geo->L, used = 0;
+    double sum = 0.0;
+    for (int r = 0; r < nreps; r++) {
+        if (reps[r].nmeas <= 0) continue;
+        double s = 0.0;
+        for (int i = 0; i < L * L; i++) s += reps[r].g[i];
+        sum += s / (double)reps[r].nmeas;
+        used++;
+    }
+    return used ? sum / used : 0.0;
+}
+
 double delta2_rel_error(const Replica *reps, int nreps, const Geometry *geo) {
     int L = geo->L;
     int used = 0;

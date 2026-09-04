@@ -229,8 +229,8 @@ int main(int argc, char *argv[]) {
         done += todo;
         rel = delta2_rel_error(reps, cfg.nthreads, &geo);
         if (cfg.verbose)
-            printf("  sweeps=%ld  Delta2 rel.err=%.4f  (target %.4f)\n",
-                   done, rel, cfg.eps);
+            printf("  sweeps=%ld  Delta2=%.6f  Delta2 rel.err=%.4f  (target %.4f)\n",
+                   done, delta2_mean(reps, cfg.nthreads, &geo), rel, cfg.eps);
         if (cfg.eps > 0 && done >= cfg.min_sweeps && rel >= 0 && rel < cfg.eps) {
             converged = 1;
             break;
