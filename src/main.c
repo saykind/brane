@@ -27,6 +27,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifndef GIT_SHA
+#define GIT_SHA "unknown"   /* overridden by the Makefile: -DGIT_SHA=... */
+#endif
+
 static Config default_config(void) {
     Config c;
     c.N = 36;
@@ -69,24 +73,39 @@ static void usage(const Config *d) {
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
            (unsigned long long)d->seed);
-    printf("  out=<path>        output .dat file (default data/N<N>/p<p8>/data.dat)\n");
+    printf("  out=<path>        explicit output .dat path (overrides outdir layout)\n");
+    printf("  outdir=<dir>      base dir; writes <dir>/N<N>/p<p8>/<stop>/therm..._nt..._it..._seed....dat\n");
+    printf("                    <stop> = eps<eps> (adaptive) or fixed<sweeps> (eps=0)\n");
 }
 
 /* Write G(q)/G^{-1}(q) to outpath atomically (temp file + rename), so a run
  * that is killed mid-write -- e.g. by a Simcloud job timeout -- never leaves a
  * truncated file, and the previous checkpoint survives. Called both per-block
- * (checkpointing) and at the end. */
+ * (checkpointing) and at the end. The header records the full run config as
+ * key=value tokens (tools/analyze.py reads any k=v it finds). */
 static void write_result_file(const char *outpath, const Config *cfg,
                               const Geometry *geo, const Result *res,
-                              int L, long done, int converged) {
+                              int L, long done, int converged, double wall_s) {
     char tmp[600];
     snprintf(tmp, sizeof(tmp), "%s.tmp", outpath);
     FILE *f = fopen(tmp, "w");
     if (!f) { fprintf(stderr, "cannot write %s\n", tmp); return; }
-    fprintf(f, "# Fourier MC membrane   N=%d L=%d p8=%.4f samples=%ld sweeps=%ld "
-               "nu=%.6f nu_err=%.6f rel_err=%.6f converged=%d\n",
-            cfg->N, L, cfg->p8, res->total_meas, done,
-            res->poisson, res->poisson_err, res->rel_err, converged);
+    long steps_per_sweep = (long)(2 * cfg->n + 1) * (2 * cfg->n + 1);
+    fprintf(f, "# Fourier MC membrane\n");
+    fprintf(f, "# N=%d L=%d n=%d p8=%.4f N8=%d Y=%.6f d0=%.4f seed=%llu\n",
+            cfg->N, L, cfg->n, cfg->p8, geo->N8, geo->Y, cfg->d0,
+            (unsigned long long)cfg->seed);
+    fprintf(f, "# nt=%d it=%d cores=%d\n",
+            cfg->nthreads, cfg->inner, cfg->nthreads * cfg->inner);
+    fprintf(f, "# therm=%ld sweeps=%ld sweeps_cap=%ld min_sweeps=%ld block=%d meas_every=%d "
+               "steps_per_sweep=%ld\n",
+            cfg->therm, done, cfg->sweeps, cfg->min_sweeps, cfg->block,
+            cfg->meas_every, steps_per_sweep);
+    fprintf(f, "# eps=%.6f rel_err=%.6f converged=%d\n",
+            cfg->eps, res->rel_err, converged);
+    fprintf(f, "# samples=%ld accept_rate=%.4f wall_s=%.2f nu=%.6f nu_err=%.6f\n",
+            res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
+    fprintf(f, "# engine_sha=%s\n", GIT_SHA);
     fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
     for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
         for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {
@@ -106,6 +125,7 @@ static void write_result_file(const char *outpath, const Config *cfg,
 int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
+    char outdir[400] = "data";      /* base dir; descriptive subpath appended */
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(&cfg); return 0; }
@@ -126,6 +146,7 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "d0=%lf", &cfg.d0) == 1) continue;
         if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
         if (sscanf(argv[i], "out=%511s", sbuf) == 1) { strncpy(outpath, sbuf, sizeof(outpath) - 1); continue; }
+        if (sscanf(argv[i], "outdir=%399s", sbuf) == 1) { strncpy(outdir, sbuf, sizeof(outdir) - 1); continue; }
         printf("Unrecognized argument '%s'\n", argv[i]);
         return 1;
     }
@@ -145,9 +166,19 @@ int main(int argc, char *argv[]) {
            cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
 
     /* Resolve the output path and create its directory up front, so per-block
-     * checkpoints during the run can write to it. */
-    if (!outpath[0])
-        snprintf(outpath, sizeof(outpath), "data/N%d/p%.2f/data.dat", cfg.N, cfg.p8);
+     * checkpoints during the run can write to it. Descriptive layout keeps
+     * different configs from overwriting each other:
+     *   <outdir>/N<N>/p<p8>/<stop>/therm<T>_nt<NT>_it<IT>_seed<SEED>.dat
+     * where <stop> = eps<eps> (adaptive) or fixed<sweeps> (fixed-length). */
+    if (!outpath[0]) {
+        char stop[64], fname[256];
+        if (cfg.eps > 0) snprintf(stop, sizeof stop, "eps%g", cfg.eps);
+        else             snprintf(stop, sizeof stop, "fixed%ld", cfg.sweeps);
+        snprintf(fname, sizeof fname, "therm%ld_nt%d_it%d_seed%llu.dat",
+                 cfg.therm, cfg.nthreads, cfg.inner, (unsigned long long)cfg.seed);
+        snprintf(outpath, sizeof outpath, "%s/N%d/p%.2f/%s/%s",
+                 outdir, cfg.N, cfg.p8, stop, fname);
+    }
     {
         char dir[512];
         snprintf(dir, sizeof(dir), "%s", outpath);
@@ -210,7 +241,8 @@ int main(int argc, char *argv[]) {
         if (omp_get_wtime() - last_ckpt > CKPT_INTERVAL) {
             Result cres = result_reduce(reps, cfg.nthreads, &geo);
             cres.rel_err = rel;
-            write_result_file(outpath, &cfg, &geo, &cres, L, done, converged);
+            write_result_file(outpath, &cfg, &geo, &cres, L, done, converged,
+                              omp_get_wtime() - t0);
             result_free(&cres);
             last_ckpt = omp_get_wtime();
             if (cfg.verbose) printf("  [checkpoint @ %ld sweeps]\n", done);
@@ -231,7 +263,7 @@ int main(int argc, char *argv[]) {
     printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
 
     /* ---- write final Green function G(q) and inverse Green G^{-1}(q) --- */
-    write_result_file(outpath, &cfg, &geo, &res, L, done, converged);
+    write_result_file(outpath, &cfg, &geo, &res, L, done, converged, elapsed);
     printf("wrote %s\n", outpath);
 
     for (int r = 0; r < cfg.nthreads; r++) replica_free(&reps[r]);

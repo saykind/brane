@@ -54,7 +54,7 @@ while IFS= read -r f; do
   mkdir -p "$(dirname "$dst")"
   cp "$f" "$dst"
   n=$((n + 1))
-done < <(find "$dl" -type f -path '*out/N*/p*/data.dat')
+done < <(find "$dl" -type f -path '*out/N*/p*/*/*.dat')
 
 echo "=== merged $n cells into $OUTDIR ==="
 if [ "$n" -eq 0 ]; then

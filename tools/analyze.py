@@ -243,7 +243,7 @@ def fit_eta_crossover(qr, Ginv_r, cnt, qlo, qhi, eta0=0.75, q8_0=None):
 # every N -- each kept only inside its own scaling window [3a_N, p8] -- gives a
 # far denser, wider q-range than any single lattice and a tighter slope. We only
 # ever pool cells with the SAME p8 (mixing couplings mixes crossover scales).
-def collect_pooled(p8_target, pattern="data/N*/p*/data.dat", nbins=60,
+def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
                    tol=1e-3):
     """Pool radial-averaged (q_r, G^-1, err, N) points from every cell whose p8
     matches p8_target, each restricted to its own window [3 a_N, p8]."""
@@ -333,7 +333,7 @@ def plot_combined(q, gi, ge, Ns, eta, err, png, wlo, whi, coupling=None):
     print(f"[plot] wrote {png}")
 
 
-def combined_all(pattern="data/N*/p*/data.dat", nbins=60, outdir="plots/combined"):
+def combined_all(pattern="data/N*/p*/*/*.dat", nbins=60, outdir="plots/combined"):
     """Run the pooled fit for every distinct p8 present; write one overlay per
     p8, a summary eta(p8) curve, and a CSV. Returns the list of result dicts."""
     import glob
@@ -630,8 +630,8 @@ def main():
                     help="upper q for crossover fit (avoid lattice UV)")
     ap.add_argument("--png", default=None)
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/data.dat",
-                    help="batch-analyze every matching file (default data/N*/p*/data.dat)")
+    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/*/*.dat",
+                    help="batch-analyze every matching file (default data/N*/p*/*/*.dat)")
     ap.add_argument("--combined", action="store_true",
                     help="pool all N at each p8 into one weighted log-log fit; "
                          "writes plots/combined/{p<p8>.png, eta_vs_p8.png, combined_eta.csv}")

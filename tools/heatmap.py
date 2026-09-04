@@ -48,7 +48,7 @@ def run_and_measure(N, p8, nt, therm, sweeps, eps):
     return measure_file(out)
 
 
-def collect_all(pattern="data/N*/p*/data.dat"):
+def collect_all(pattern="data/N*/p*/*/*.dat"):
     """Gather (N, p8, eta) from every cell file on disk (combines all runs)."""
     import glob
     pts = []
@@ -128,7 +128,7 @@ def main():
                     help="convergence target passed to brane (rel err on Delta2)")
     ap.add_argument("--png", default="plots/heatmap.png")
     ap.add_argument("--replot-all", action="store_true",
-                    help="replot EVERY data/N*/p*/data.dat cell on disk (combine all runs)")
+                    help="replot EVERY data/N*/p*/*/*.dat cell on disk (combine all runs)")
     ap.add_argument("--refine", type=int, default=0,
                     help="triangulation subdivisions for a smoother map (no new sims)")
     args = ap.parse_args()

@@ -11,7 +11,8 @@ CC      ?= clang
 CSTD     = -std=c11
 WARN     = -Wall -Wextra
 OPT      = -O3 -march=native -ffast-math -funroll-loops
-CFLAGS   = $(CSTD) $(WARN) $(OPT) -Isrc
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+CFLAGS   = $(CSTD) $(WARN) $(OPT) -Isrc -DGIT_SHA=\"$(GIT_SHA)\"
 LDLIBS   = -lm
 
 # --- OpenMP autodetection ------------------------------------------------

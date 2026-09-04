@@ -43,11 +43,9 @@ i="${SC_BATCH_ID:-${SC_BATCH_INDEX:-0}}"        # CLI exposes the index as SC_BA
 N="${NARR[$(( i / nP ))]}"
 P="${PARR[$(( i % nP ))]}"
 
-pdir=$(printf 'p%.2f' "$P")
-out="$OUTDIR/N$N/$pdir/data.dat"
-mkdir -p "$(dirname "$out")"
-
+# Let the engine build the descriptive path under $OUTDIR:
+#   $OUTDIR/N<N>/p<p8>/<stop>/therm..._nt..._it..._seed....dat
 echo ">>> batch index $i -> N=$N p8=$P nt=$NT it=$IT on $(hostname) ($(nproc) cores)"
 ./brane "N=$N" "p8=$P" "nt=$NT" "it=$IT" "therm=$THERM" "sweeps=$SWEEPS" \
-        "eps=$EPS" "minsweeps=$MINSW" "out=$out"
-echo ">>> wrote $out"
+        "eps=$EPS" "minsweeps=$MINSW" "outdir=$OUTDIR"
+echo ">>> wrote under $OUTDIR/N$N/p$P/"
