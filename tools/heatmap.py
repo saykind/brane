@@ -96,11 +96,66 @@ def run_and_measure(N, p8, nt, therm, sweeps):
     subprocess.run(["./brane", f"N={N}", f"p8={p8}", f"nt={nt}",
                     f"therm={therm}", f"sweeps={sweeps}", f"out={out}"],
                    check=True, capture_output=True, text=True)
-    qmag, G, Ginv, header = analyze.load(out)
-    L = float(header["L"]); a = 2 * np.pi / L
+    return measure_file(out)
+
+
+def measure_file(path):
+    """Return (N, p8, eta) measured from a single brane output file."""
+    qmag, G, Ginv, header = analyze.load(path)
+    N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
+    p8 = float(header["p8"])
     qr, Gr, Ginv_r, cnt = analyze.radial_average(qmag, G, 60)
     eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, 3 * a, max(p8, 5 * a))
-    return eta, err
+    return N, p8, eta
+
+
+def collect_all(pattern="data/hm_*.dat"):
+    """Gather (N, p8, eta) from every cell file on disk (combines all runs)."""
+    import glob
+    pts = []
+    for f in sorted(glob.glob(pattern)):
+        try:
+            N, p8, eta = measure_file(f)
+            if eta is not None and np.isfinite(eta):
+                pts.append((N, p8, eta))
+        except Exception as e:
+            print(f"  skip {f}: {e}")
+    return pts
+
+
+def plot_scattered(pts, png):
+    """Colormap from an arbitrary (possibly irregular) set of (N,p8,eta) points
+    via Delaunay triangulation -- lets us combine grids from multiple runs."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.tri as mtri
+    except ImportError:
+        print("matplotlib missing; cannot plot.")
+        return
+    P = np.array([p[1] for p in pts], float)
+    NN = np.array([p[0] for p in pts], float)
+    E = np.array([p[2] for p in pts], float)
+    triang = mtri.Triangulation(P, NN)
+    fig, ax = plt.subplots(figsize=(8.5, 6))
+    tcf = ax.tricontourf(triang, E, levels=np.linspace(0.35, 0.9, 23),
+                         cmap="viridis", extend="both")
+    fig.colorbar(tcf, ax=ax, label=r"effective $\eta$")
+    try:
+        cs = ax.tricontour(triang, E, levels=[0.5, 0.6, 0.7, 0.78],
+                           colors="white", linewidths=[1, 1, 1, 2],
+                           linestyles=["--", "--", "--", "-"])
+        ax.clabel(cs, fmt="%.2f", fontsize=8)
+    except Exception:
+        pass
+    ax.plot(P, NN, "o", ms=3, color="white", mec="black", mew=0.4)
+    ax.set_xlabel(r"$p_8$  (coupling / crossover $q_8\sim p_8$)")
+    ax.set_ylabel(r"$N$  (size, $L=2N+1$)")
+    ax.set_title(rf"Effective $\eta(N, p_8)$ -- {len(pts)} runs combined "
+                 r"(white line = 0.78)")
+    fig.tight_layout(); fig.savefig(png, dpi=140)
+    print(f"[plot] wrote {png}  ({len(pts)} cells)")
 
 
 def main():
@@ -113,9 +168,22 @@ def main():
     ap.add_argument("--png", default="data/heatmap.png")
     ap.add_argument("--from-csv", default=None,
                     help="replot an existing heatmap.csv instead of simulating")
+    ap.add_argument("--replot-all", action="store_true",
+                    help="replot EVERY data/hm_*.dat cell on disk (combine all runs)")
     ap.add_argument("--refine", type=int, default=1,
                     help="bilinear upsample factor for a smoother map (no new sims)")
     args = ap.parse_args()
+
+    if args.replot_all:
+        pts = collect_all()
+        # also dump a combined CSV of scattered points
+        with open("data/heatmap_all.csv", "w") as f:
+            f.write("N,p8,eta\n")
+            for N, p8, e in sorted(pts):
+                f.write(f"{N},{p8:.3f},{e:.4f}\n")
+        print(f"[csv] wrote data/heatmap_all.csv ({len(pts)} cells)")
+        plot_scattered(pts, args.png)
+        return
 
     if args.from_csv:
         Ns, p8s, eta = load_csv(args.from_csv)
@@ -128,7 +196,7 @@ def main():
 
     for i, N in enumerate(Ns):
         for j, p8 in enumerate(p8s):
-            e, de = run_and_measure(N, p8, args.nt, args.therm, args.sweeps)
+            _, _, e = run_and_measure(N, p8, args.nt, args.therm, args.sweeps)
             eta[i, j] = e if e is not None else np.nan
             print(f"  N={N:3d} p8={p8:.2f} -> eta={e:.3f}", flush=True)
 
