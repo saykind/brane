@@ -387,13 +387,18 @@ def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
         sys.exit(f"no legacy files match {pattern}")
     os.makedirs(outdir, exist_ok=True)
     q, gi, ge, Ns = [], [], [], []          # ALL points (colored by N in plot)
+    per_n = []                               # (N, eta_w, err_w) per file
     for f in files:
         qmag, G, N, L, a = load_legacy(f)
         qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins)
         q.extend(qr); gi.extend(Ginv_r); ge.extend(Ginv_err)
         Ns.extend([N] * len(qr))
         inw = int(((qr >= lo) & (qr <= hi)).sum())
-        print(f"  N={N:3d}  a={a:.4f}  window=[{lo:.3f},{hi:.3f}]  in-window pts={inw}")
+        e1, er1, _ = fit_eta_window(qr, Ginv_r, cnt, lo, hi, Ginv_err)
+        if e1 is not None:
+            per_n.append((N, e1, er1))
+        print(f"  N={N:3d}  a={a:.4f}  window=[{lo:.3f},{hi:.3f}]  in-window pts={inw}"
+              f"  eta_N={'%.3f'%e1 if e1 is not None else 'n/a'}")
         # per-file fit.png (mirrors the modern analyze fit plot)
         analyze_legacy_file(f, p8, lo, hi, qmag, 1.0 / G, qr, Gr, cnt, Ginv_err)
     q, gi, ge, Ns = map(np.array, (q, gi, ge, Ns))
@@ -407,7 +412,55 @@ def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
     plot_combined(q, gi, ge, Ns, eta, err,
                   os.path.join(outdir, "combined_legacy.png"),
                   lo, hi, coupling=p8)
+    _plot_eta_of_N(per_n, eta, err, lo, hi, p8,
+                   os.path.join(outdir, "eta_vs_N.png"))
     return eta, err, npts, nN
+
+
+def _plot_eta_of_N(per_n, eta_pooled, err_pooled, lo, hi, p8, png):
+    """eta measured per single N (windowed fit over [lo,hi]) vs N -- tests
+    whether the exponent is N-independent (universal) at these large sizes."""
+    if not per_n:
+        return
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    N = np.array([r[0] for r in per_n], float)
+    e = np.array([r[1] for r in per_n], float)
+    er = np.array([r[2] for r in per_n], float)
+    # trend test: weighted linear regression eta vs N
+    w = 1.0 / np.where(er > 0, er, np.nan) ** 2
+    ok = np.isfinite(w)
+    slope = serr = None
+    if ok.sum() >= 3:
+        W = np.diag(w[ok]); X = np.vstack([N[ok], np.ones(ok.sum())]).T
+        cov = np.linalg.inv(X.T @ W @ X)
+        beta = cov @ X.T @ W @ e[ok]
+        slope, serr = float(beta[0]), float(np.sqrt(cov[0, 0]))
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    ax.errorbar(N, e, yerr=er, fmt="o", color="C0", capsize=3,
+                label=r"per-$N$ windowed $\eta$")
+    ax.axhspan(eta_pooled - err_pooled, eta_pooled + err_pooled,
+               color="C1", alpha=0.20)
+    ax.axhline(eta_pooled, color="C1", lw=1.5,
+               label=rf"pooled $\eta={eta_pooled:.3f}\pm{err_pooled:.3f}$")
+    ax.axhline(0.78, ls=":", color="0.4", label=r"thesis $\eta=0.78$")
+    ttl = rf"Legacy $\eta$ vs $N$  (window $[{lo:.3f},{hi:.3f}]$, $q_8\!\sim\!p_8={p8}$)"
+    if slope is not None:
+        sig = abs(slope) / serr if serr else 0.0
+        ax.set_title(ttl + "\n" +
+                     rf"trend $d\eta/dN={slope:+.4f}\pm{serr:.4f}$ "
+                     rf"({sig:.1f}$\sigma$)")
+    else:
+        ax.set_title(ttl)
+    ax.set_xlabel(r"$N$  ($L=2N+1$)"); ax.set_ylabel(r"windowed $\eta$")
+    ax.grid(alpha=0.3); ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
+    print(f"[plot] wrote {png}"
+          + (f"   (d eta/dN = {slope:+.4f} +/- {serr:.4f})" if slope is not None else ""))
 
 
 def analyze_legacy_file(datfile, p8, lo, hi, qmag, Ginv_all, qr, Gr, cnt,
