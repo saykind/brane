@@ -38,11 +38,12 @@ def measure_file(path):
     return N, p8, eta
 
 
-def run_and_measure(N, p8, nt, therm, sweeps):
+def run_and_measure(N, p8, nt, therm, sweeps, eps):
     out = f"data/N{N}/p{p8:.2f}/data.dat"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     subprocess.run(["./brane", f"N={N}", f"p8={p8}", f"nt={nt}",
-                    f"therm={therm}", f"sweeps={sweeps}", f"out={out}"],
+                    f"therm={therm}", f"sweeps={sweeps}", f"eps={eps}",
+                    f"out={out}"],
                    check=True, capture_output=True, text=True)
     return measure_file(out)
 
@@ -123,6 +124,8 @@ def main():
     ap.add_argument("--nt", type=int, default=12)
     ap.add_argument("--therm", type=int, default=40)
     ap.add_argument("--sweeps", type=int, default=60)
+    ap.add_argument("--eps", type=float, default=0.01,
+                    help="convergence target passed to brane (rel err on Delta2)")
     ap.add_argument("--png", default="plots/heatmap.png")
     ap.add_argument("--replot-all", action="store_true",
                     help="replot EVERY data/N*/p*/data.dat cell on disk (combine all runs)")
@@ -136,7 +139,8 @@ def main():
         p8s = [float(x) for x in args.p8s.split(",")]
         for N in Ns:
             for p8 in p8s:
-                _, _, e = run_and_measure(N, p8, args.nt, args.therm, args.sweeps)
+                _, _, e = run_and_measure(N, p8, args.nt, args.therm,
+                                          args.sweeps, args.eps)
                 estr = f"{e:.3f}" if e is not None else "None (window too narrow)"
                 print(f"  N={N:3d} p8={p8:.2f} -> eta={estr}", flush=True)
 

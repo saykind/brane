@@ -231,8 +231,8 @@ plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
     axL.loglog(qmag, Ginv, ".", ms=2, alpha=0.18, color="0.7",
                label="all modes (q_x, q_y)")
     if Ginv_err is not None and np.any(Ginv_err > 0):
-        axL.errorbar(qr, Ginv_r, yerr=Ginv_err, fmt="o", ms=4, color="C0",
-                     ecolor="C0", elinewidth=0.8, capsize=2, zorder=3,
+        axL.errorbar(qr, Ginv_r, yerr=Ginv_err, fmt="o", ms=2.5, color="C0",
+                     ecolor="k", elinewidth=0.8, capsize=2, zorder=3,
                      label=r"radial avg $G^{-1}(q_r)\pm$SE")
     else:
         axL.scatter(qr, Ginv_r, s=12 + 40 * cnt / cnt.max(), color="C0",
