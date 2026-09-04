@@ -12,7 +12,7 @@ Interpretation guide:
 Each (N, p8) cell is saved as data/N<N>/p<p8>/data.dat, so runs accumulate on
 disk; --replot-all combines every cell present. eta is measured exactly as in
 analyze.py: rotationally average G(q_r), then a weighted log-log slope over the
-window [4a, p8].
+window [3a, p8].
 
 Usage:
     uv run tools/heatmap.py                                  # default grid
@@ -34,7 +34,7 @@ def measure_file(path):
     N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
     p8 = float(header["p8"])
     qr, Gr, Ginv_r, cnt = analyze.radial_average(qmag, G, 60)
-    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, 4 * a, p8)
+    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, 3 * a, p8)
     return N, p8, eta
 
 
