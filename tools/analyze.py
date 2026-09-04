@@ -233,6 +233,7 @@ plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
     axR.legend(frameon=False, fontsize=8); axR.grid(True, which="both", alpha=0.3)
 
     fig.tight_layout(); fig.savefig(out_png, dpi=140)
+    plt.close(fig)
     print(f"[plot] wrote {out_png}")
 
 

@@ -137,7 +137,8 @@ def main():
         for N in Ns:
             for p8 in p8s:
                 _, _, e = run_and_measure(N, p8, args.nt, args.therm, args.sweeps)
-                print(f"  N={N:3d} p8={p8:.2f} -> eta={e:.3f}", flush=True)
+                estr = f"{e:.3f}" if e is not None else "None (window too narrow)"
+                print(f"  N={N:3d} p8={p8:.2f} -> eta={estr}", flush=True)
 
     pts = collect_all()
     write_csv(pts)
