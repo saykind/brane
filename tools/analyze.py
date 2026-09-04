@@ -44,6 +44,7 @@ Usage
 """
 import argparse
 import os
+import re
 import sys
 import numpy as np
 
@@ -75,6 +76,33 @@ def load(path):
         return data[:, 4], data[:, 5], data[:, 6], data[:, 7], header  # qmag,G,Gerr,Ginv
     # backward compat: old 7-column files (no Gerr)
     return data[:, 4], data[:, 5], np.zeros(len(data)), data[:, 6], header
+
+
+def load_legacy(path):
+    """Read a LEGACY brane file (example_data/N=<N>.dat).
+
+    Legacy layout: L*L modes in row-major (q1=0..L-1, q2=0..L-1) order, each
+    written over three lines -- "c0 c1", "Re(h) Im(h)", "g" -- followed by a
+    trailing "C px0 px1" line. Here g = sum_measurements |h_q|^2 and c1 is the
+    measurement count, so (legacy storage.c:86) the inverse Green function is
+    G^-1(q) = c1 / g, i.e. G(q) = g / c1. The mode index (q1,q2) is recovered
+    from the row-major position; signed frequency is q1 if q1<=N else q1-L, and
+    |q| = a*sqrt(q1s^2 + q2s^2) with a = 2*pi/L (continuum convention, matching
+    the legacy x = i*a axis).
+
+    Returns (qmag, G, N, L, a) for the usable modes (g>0, c1>0, q>0).
+    """
+    N = int(re.search(r"N=(\d+)", path).group(1)); L = 2 * N + 1; a = 2 * np.pi / L
+    toks = np.fromstring(open(path).read().replace("\t", " "), sep=" ")
+    body = toks[:L * L * 5].reshape(L * L, 5)      # [c0, c1, re, im, g]
+    c1, g = body[:, 1], body[:, 4]
+    idx = np.arange(L * L); q1, q2 = idx // L, idx % L
+    s1 = np.where(q1 <= N, q1, q1 - L)
+    s2 = np.where(q2 <= N, q2, q2 - L)
+    qmag = a * np.sqrt(s1.astype(float) ** 2 + s2.astype(float) ** 2)
+    good = (g > 0) & (c1 > 0) & (qmag > 0)
+    G = g[good] / c1[good]
+    return qmag[good], G, N, L, a
 
 
 def radial_average(qmag, G, nbins, Gerr=None):
@@ -321,6 +349,41 @@ def combined_all(pattern="data/N*/p*/data.dat", nbins=60, outdir="plots/combined
     return rows
 
 
+def combined_legacy(pattern="example_data/N=*.dat", p8=0.3, nbins=40,
+                    outdir="plots/combined_legacy"):
+    """Combined multi-N pooled fit on the LEGACY large-N data (all files share
+    one physical coupling, default p8=0.3). Pools radial-averaged G^-1(q) from
+    every N -- each kept inside its own window [3 a_N, p8] -- into one weighted
+    log-log slope, mirroring the legacy 'eta/fit' scheme (which likewise pooled
+    axis+diagonal points for i>=3 across N), but using the full rotational
+    average instead of just axes/diagonals. Returns (eta, err, npts, nN)."""
+    import glob
+    files = sorted(glob.glob(pattern),
+                   key=lambda p: int(re.search(r"N=(\d+)", p).group(1)))
+    if not files:
+        sys.exit(f"no legacy files match {pattern}")
+    os.makedirs(outdir, exist_ok=True)
+    q, gi, ge, Ns = [], [], [], []
+    for f in files:
+        qmag, G, N, L, a = load_legacy(f)
+        qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins)
+        m = (qr >= 3 * a) & (qr <= p8) & (Ginv_r > 0) & np.isfinite(Ginv_r)
+        q.extend(qr[m]); gi.extend(Ginv_r[m])
+        ge.extend(Ginv_err[m]); Ns.extend([N] * int(m.sum()))
+        e1, s1, _ = plateau_eta(qr, Ginv_r, cnt, 3 * a, p8)
+        print(f"  N={N:3d}  a={a:.4f}  window=[{3*a:.3f},{p8}]  "
+              f"pts={int(m.sum())}  plateau_eta="
+              f"{'%.3f'%e1 if e1 is not None else 'n/a'}")
+    q, gi, ge, Ns = map(np.array, (q, gi, ge, Ns))
+    eta, err, npts = fit_pooled(q, gi, ge)
+    nN = len(set(Ns.tolist()))
+    print(f"\nCOMBINED (legacy, p8={p8}): eta = {eta:.3f} +/- {err:.3f}   "
+          f"({nN} sizes N={Ns.min()}-{Ns.max()}, {npts} pts)")
+    plot_combined(q, gi, ge, Ns, eta, err, p8,
+                  os.path.join(outdir, "combined_legacy.png"))
+    return eta, err, npts, nN
+
+
 def _plot_eta_of_p8(rows, png):
     try:
         import matplotlib
@@ -477,7 +540,17 @@ def main():
                          "writes plots/combined/{p<p8>.png, eta_vs_p8.png, combined_eta.csv}")
     ap.add_argument("--combined-p8", type=float, default=None,
                     help="combined fit for a single p8 only (implies --combined)")
+    ap.add_argument("--legacy", metavar="GLOB", nargs="?",
+                    const="example_data/N=*.dat",
+                    help="combined multi-N fit on LEGACY files "
+                         "(default example_data/N=*.dat); set coupling with --p8")
+    ap.add_argument("--p8", type=float, default=0.3,
+                    help="physical coupling of the legacy runs (fit ceiling); default 0.3")
     args = ap.parse_args()
+
+    if args.legacy:
+        combined_legacy(args.legacy, p8=args.p8, nbins=args.nbins)
+        return
 
     if args.combined or args.combined_p8 is not None:
         if args.combined_p8 is not None:
