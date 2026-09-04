@@ -143,6 +143,30 @@ def effective_exponent(qr, Ginv_r):
     return qr, 4.0 - np.gradient(lG, lq)
 
 
+def running_eta(q, Ginv, nwin=40, width=1.6, min_pts=15):
+    """eta_eff(q_r) WITHOUT angular averaging: at each q_r scale, fit the local
+    log-log slope of ALL modes whose |q| falls in a fixed multiplicative window
+    [c/width, c*width]. This is a local *fit* across every angle at that scale
+    (not an average of G), so anisotropy is never collapsed into one value.
+    Returns (q_centers, eta_eff)."""
+    m = (q > 0) & (Ginv > 0) & np.isfinite(Ginv)
+    q, Ginv = q[m], Ginv[m]
+    if len(q) < min_pts:
+        return np.array([]), np.array([])
+    lq, lg = np.log(q), np.log(Ginv)
+    centers = np.logspace(np.log10(q.min() * 1.02), np.log10(q.max() * 0.98), nwin)
+    hw = np.log(width)
+    cen, eta = [], []
+    for c in centers:
+        lc = np.log(c)
+        sel = (lq >= lc - hw) & (lq <= lc + hw)
+        if int(sel.sum()) < min_pts:
+            continue
+        slope = np.polyfit(lq[sel], lg[sel], 1)[0]
+        cen.append(c); eta.append(4.0 - slope)
+    return np.array(cen), np.array(eta)
+
+
 def plateau_eta(qr, Ginv_r, cnt, qlo, qhi):
     """Primary, assumption-light estimator: the mean of eta_eff(q) over the
     scaling window [qlo, qhi] (which should be the flat part of eta_eff, below
@@ -505,63 +529,60 @@ def _plot_eta_of_p8(rows, png):
 
 
 # ----------------------------------------------------------------------------
-def plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax,
-         out_png, out_gp, datfile, Ginv_err=None):
+def plot(q, Ginv, theta, qcen, eta_eff, eta_w, fitline, p8, qmin, qmax,
+         out_png, out_gp, datfile):
+    """No angular averaging: every mode is a point (q_r, Ginv), colored by its
+    polar angle so direction-dependence (anisotropy) is visible. Left panel is
+    the point cloud + windowed power-law fit; right panel is the running local
+    exponent eta_eff(q_r)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        eta = cross["eta"] if cross else (eta_w or 0.78)
+        eta = eta_w if eta_w else 0.78
         with open(out_gp, "w") as f:
             f.write(f"""set terminal pngcairo size 900,650
 set output '{out_png}'
 set logscale xy
 set xlabel 'q_r'; set ylabel 'G^{{-1}}'
-plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
+plot '{datfile}' using 5:8 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
      x**4 lw 2 t 'q^4', x**(4-{eta}) lw 2 t 'q^{{4-eta}}'
 """)
         print(f"[plot] matplotlib not found; wrote gnuplot script {out_gp}")
         return
 
+    # fold angle into [0,45] deg by lattice symmetry: 0/90 = axis, 45 = diagonal
+    tdeg = np.degrees(np.arctan2(np.abs(np.sin(theta)), np.abs(np.cos(theta))))
+    tdeg = np.minimum(tdeg, 90 - tdeg)
+
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(12, 5))
-    # left: inverse Green
-    axL.loglog(qmag, Ginv, ".", ms=2, alpha=0.18, color="0.7",
-               label="all modes (q_x, q_y)")
-    if Ginv_err is not None and np.any(Ginv_err > 0):
-        axL.errorbar(qr, Ginv_r, yerr=Ginv_err, fmt="o", ms=2.5, color="C0",
-                     ecolor="k", elinewidth=0.8, capsize=2, zorder=3,
-                     label=r"radial avg $G^{-1}(q_r)\pm$SE")
-    else:
-        axL.scatter(qr, Ginv_r, s=12 + 40 * cnt / cnt.max(), color="C0",
-                    zorder=3, label=r"radial avg $G^{-1}(q_r)$")
-    qq = np.logspace(np.log10(qmag[qmag > 0].min()), np.log10(qmag.max()), 200)
-    axL.loglog(qq, qq**4, "--", color="C3", lw=1.3, label=r"$q^4$ (harmonic)")
-    if cross:
-        eta, q8, C = cross["eta"], cross["q8"], cross["C"]
-        axL.loglog(qq, C * qq**4 * (1 + (q8 / qq) ** eta), "-", color="C2",
-                   lw=2, label=rf"crossover ansatz $\eta={eta:.2f}$ (heuristic)")
-        axL.axvline(q8, ls=":", color="C2", alpha=0.7,
-                    label=rf"$q_8={q8:.2f}$")
-    axL.axvspan(qmin, qmax, color="C1", alpha=0.10, label="windowed-fit range")
-    axL.set_xlabel(r"$q_r=|q|$"); axL.set_ylabel(r"$G^{-1}(q_r)$")
-    axL.set_title(rf"Inverse Green ($p_8={p8}$)")
+
+    sc = axL.scatter(q, Ginv, c=tdeg, s=4, alpha=0.45, cmap="viridis",
+                     vmin=0, vmax=45, rasterized=True, linewidths=0)
+    cb = fig.colorbar(sc, ax=axL, pad=0.01)
+    cb.set_label("mode angle to nearest axis (deg): 0=axis, 45=diagonal", fontsize=8)
+    qq = np.logspace(np.log10(q[q > 0].min()), np.log10(q.max()), 200)
+    axL.plot(qq, qq ** 4, "--", color="C3", lw=1.3, label=r"$q^4$ (harmonic)")
+    if fitline is not None:
+        axL.plot(fitline[0], fitline[1], "-", color="k", lw=2,
+                 label=rf"windowed fit $\eta={eta_w:.2f}$")
+    axL.axvspan(qmin, qmax, color="C1", alpha=0.12, label="fit window")
+    axL.set_xscale("log"); axL.set_yscale("log")
+    axL.set_xlabel(r"$q_r=|q|$"); axL.set_ylabel(r"$G^{-1}(q)$  (every mode)")
+    axL.set_title(rf"Inverse Green, all modes ($p_8={p8}$)")
     axL.legend(frameon=False, fontsize=8); axL.grid(True, which="both", alpha=0.3)
 
-    # right: effective exponent
-    qe, ee = effective_exponent(qr, Ginv_r)
-    axR.semilogx(qe, ee, "o-", ms=4, color="C0", label=r"$\eta_{eff}(q)$")
-    if cross:
-        axR.axhline(cross["eta"], ls="-", color="C2",
-                    label=rf"crossover $\eta={cross['eta']:.2f}$")
-        axR.axvline(cross["q8"], ls=":", color="C2", alpha=0.7)
+    if len(qcen):
+        axR.semilogx(qcen, eta_eff, "-", color="C0", lw=1.5,
+                     label=r"$\eta_{eff}(q_r)$ (sliding local fit)")
     if eta_w is not None:
         axR.axhline(eta_w, ls="--", color="C1", label=rf"windowed $\eta={eta_w:.2f}$")
     axR.axhline(0.0, color="0.8", lw=0.8)
-    axR.axvspan(qmin, qmax, color="C1", alpha=0.10)
+    axR.axvspan(qmin, qmax, color="C1", alpha=0.12)
     axR.set_ylim(-0.5, 4.2)
     axR.set_xlabel(r"$q_r$"); axR.set_ylabel(r"$\eta_{eff}=4-d\ln G^{-1}/d\ln q$")
-    axR.set_title("Effective exponent (plateau = scaling window)")
+    axR.set_title("Running exponent (no angular averaging)")
     axR.legend(frameon=False, fontsize=8); axR.grid(True, which="both", alpha=0.3)
 
     fig.tight_layout(); fig.savefig(out_png, dpi=140)
@@ -576,48 +597,77 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
     p8 = float(header.get("p8", 0.3))
     a = 2 * np.pi / float(header.get("L", 81))
 
-    # NOTE: default window stops at the crossover q8~p8 (not above it). The
-    # right-hand eta_eff(q) panel is there so you can judge whether even p8 is
-    # too high a ceiling and tighten --qmax below the crossover.
+    # Default window: from a few grid steps (finite-size floor) up to the
+    # crossover q8~p8. The running-exponent panel lets you judge/tighten it.
     qmin = qmin_arg if qmin_arg is not None else 3 * a
     qmax = qmax_arg if qmax_arg is not None else p8
 
-    qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins, Gerr)
-    eta_p, spread_p, nsh_p = plateau_eta(qr, Ginv_r, cnt, qmin, qmax)
-    eta_w, err_w, nsh = fit_eta_window(qr, Ginv_r, cnt, qmin, qmax, Ginv_err)
-    cross = fit_eta_crossover(qr, Ginv_r, cnt, 2 * a, quv,
-                              eta0=eta_w if eta_w else 0.75, q8_0=p8)
+    # --- all modes as points, NO angular averaging -------------------------
+    data = np.loadtxt(datfile, comments="#")
+    qx, qy, qm, Gc, Gec = (data[:, 2], data[:, 3], data[:, 4],
+                           data[:, 5], data[:, 6])
+    m = (qm > 0) & (Gc > 0) & np.isfinite(Gc)
+    q, theta = qm[m], np.arctan2(qy[m], qx[m])
+    Ginv_pt = 1.0 / Gc[m]
+    Ginv_err_pt = np.where(Gec[m] > 0, Gec[m] / Gc[m] ** 2, 0.0)
+    err_arg = Ginv_err_pt if np.all(Ginv_err_pt > 0) else None
+
+    # primary: unbinned weighted log-log fit over the window (cnt=1 per mode)
+    cnt1 = np.ones_like(q)
+    eta_w, err_w, npts = fit_eta_window(q, Ginv_pt, cnt1, qmin, qmax, err_arg)
+
+    # display fit line over the window
+    fitline = None
+    mw = (q >= qmin) & (q <= qmax) & (Ginv_pt > 0)
+    if mw.sum() >= 3:
+        sl, ic = np.polyfit(np.log(q[mw]), np.log(Ginv_pt[mw]), 1)
+        qq = np.logspace(np.log10(q[mw].min()), np.log10(q[mw].max()), 60)
+        fitline = (qq, np.exp(ic) * qq ** sl)
+
+    # running local exponent (sliding fit over the raw cloud) + its window mean
+    qcen, eta_eff = running_eta(q, Ginv_pt)
+    eta_r = spread_r = None
+    if len(qcen):
+        inw = (qcen >= qmin) & (qcen <= qmax)
+        if inw.sum() >= 2:
+            eta_r = float(np.mean(eta_eff[inw]))
+            spread_r = float(np.std(eta_eff[inw]))
 
     if not quiet:
         print(f"file           : {datfile}")
         print(f"N, L           : {header.get('N','?')}, {header.get('L','?')}")
         print(f"p8             : {p8}")
-        print(f"window         : q_r in [{qmin:.3f}, {qmax:.3f}]  ({nsh} shells)")
-        if eta_p is not None:
-            flat = "flat" if spread_p < 0.25 else "NOT flat -> eta ill-defined here"
-            print(f"plateau eta    : {eta_p:.3f}  (eta_eff spread {spread_p:.3f}, {flat})  [PRIMARY]")
+        print(f"window         : q_r in [{qmin:.3f}, {qmax:.3f}]  ({npts} modes, unbinned)")
         if eta_w is not None:
-            print(f"windowed slope : {eta_w:.3f} +/- {err_w:.3f}  (stat. error)")
-        if cross:
-            print(f"crossover fit  : {cross['eta']:.3f} +/- {cross['eta_err']:.3f}"
-                  f"   q8={cross['q8']:.3f}   [heuristic ansatz, cross-check only]")
+            print(f"windowed eta   : {eta_w:.3f} +/- {err_w:.3f}  (all modes, no angular avg)  [PRIMARY]")
+        if eta_r is not None:
+            flat = "flat" if spread_r < 0.25 else "NOT flat -> eta ill-defined here"
+            print(f"running eta_eff : {eta_r:.3f}  (spread {spread_r:.3f} across window, {flat})")
         print(f"Poisson ratio  : {header.get('nu','?')} +/- {header.get('nu_err','?')}")
         conv = header.get("converged", "?")
         print(f"run            : sweeps={header.get('sweeps','?')} "
               f"Delta2 rel.err={header.get('rel_err','?')} converged={conv}")
 
-    # mirror the data subpath: data/N40/p0.40/data.dat -> plots/N40/p0.40/
+    # Mirror the input path under plots/, keyed by the data filename stem so
+    # multiple configs (or example_data files) never collide:
+    #   data/N60/p0.40/fixed800/therm300_nt16_it1_seed12345.dat
+    #     -> plots/N60/p0.40/fixed800/therm300_nt16_it1_seed12345.png
+    #   example_data/N=100.dat -> plots/example_data/N=100.png
     d = os.path.dirname(datfile)
-    pdir = ("plots" + d[len("data"):]) if (d == "data" or d.startswith("data/")) else "plots"
+    stem = os.path.splitext(os.path.basename(datfile))[0]
+    if d == "data" or d.startswith("data/"):
+        pdir = "plots" + d[len("data"):]
+    elif d:
+        pdir = os.path.join("plots", d)
+    else:
+        pdir = "plots"
     os.makedirs(pdir, exist_ok=True)
-    png = png or os.path.join(pdir, "fit.png")
-    gp = os.path.join(pdir, "fit.gp")
-    plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, datfile,
-         Ginv_err=Ginv_err)
+    png = png or os.path.join(pdir, stem + ".png")
+    gp = os.path.join(pdir, stem + ".gp")
+    plot(q, Ginv_pt, theta, qcen, eta_eff, eta_w, fitline, p8, qmin, qmax,
+         png, gp, datfile)
     return dict(N=int(header.get("N", 0)), p8=p8, png=png,
-                eta_plateau=eta_p, eta_plateau_spread=spread_p,
-                eta_window=eta_w, eta_window_err=err_w,
-                eta_crossover=cross["eta"] if cross else None)
+                eta_window=eta_w, eta_window_err=err_w, eta_running=eta_r)
 
 
 def main():
@@ -632,15 +682,17 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/*/*.dat",
                     help="batch-analyze every matching file (default data/N*/p*/*/*.dat)")
-    ap.add_argument("--combined", action="store_true",
+    ap.add_argument("--combined", metavar="GLOB", nargs="?", const="data/N*/p*/*/*.dat",
                     help="pool all N at each p8 into one weighted log-log fit; "
-                         "writes plots/combined/{p<p8>.png, eta_vs_p8.png, combined_eta.csv}")
+                         "writes plots/combined/{p<p8>.png, eta_vs_p8.png, combined_eta.csv} "
+                         "(default glob data/N*/p*/*/*.dat; pass e.g. 'example_data/N=*.dat')")
     ap.add_argument("--combined-p8", type=float, default=None,
                     help="combined fit for a single p8 only (implies --combined)")
     ap.add_argument("--legacy", metavar="GLOB", nargs="?",
-                    const="example_data/N=*.dat",
-                    help="combined multi-N fit on LEGACY files "
-                         "(default example_data/N=*.dat); set coupling with --p8")
+                    const="legacy/example_data/N=*.dat",
+                    help="combined multi-N fit on ORIGINAL legacy-format files "
+                         "(default legacy/example_data/N=*.dat, the preserved backup); "
+                         "reformatted example_data/ now works with --combined instead")
     ap.add_argument("--p8", type=float, default=0.3,
                     help="physical coupling of the legacy runs (fit ceiling); default 0.3")
     args = ap.parse_args()
@@ -663,7 +715,7 @@ def main():
                           f"plots/combined/p{args.combined_p8:.2f}.png",
                           float(q.min()), args.combined_p8)
         else:
-            combined_all(nbins=args.nbins)
+            combined_all(pattern=args.combined, nbins=args.nbins)
         return
 
     if args.all:
