@@ -369,26 +369,23 @@ def combined_all(pattern="data/N*/p*/data.dat", nbins=60, outdir="plots/combined
 
 
 def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
-                    lo_frac=0.055 / 0.3, hi_frac=0.11 / 0.3,
-                    nbins=40, outdir="plots/combined_legacy"):
+                    lo=0.055, hi=0.11, nbins=40, outdir="plots/combined_legacy"):
     """Combined multi-N pooled fit on the LEGACY large-N data (all files share
     one physical coupling, default p8=0.3, so q8~p8=0.3).
 
-    The anomalous law G^-1 ~ q^(4-eta) holds only for q << q8. Fitting up to q8
-    itself includes the crossover roll-off and biases the slope LOW (~0.68).
-    The legacy analysis (legacy/plot.gp) fits the model x^4*(a*p8/x)^eta -- a
-    pure power law q^(4-eta) -- over the window [0.055, 0.11] = [q8/5.5, q8/2.7],
-    well inside the plateau, and reports eta ~ 0.78. We reproduce that: pool the
-    radial-averaged G^-1(q) from every N over [lo_frac*q8, hi_frac*q8] (default
-    the legacy [0.055,0.11]) and fit one count-weighted log-log slope. Returns
-    (eta, err, npts, nN)."""
+    The fit window is the exact legacy one: q in [0.055, 0.11], hardcoded in
+    legacy/plot.gp (fit2=0.11, fit1=.5*fit2) as an ABSOLUTE q-range. The model
+    there, x^4*(a*p8/x)^eta, is a pure power law q^(4-eta), so this is just a
+    log-log slope over that window -- well below the crossover q8~p8=0.3, where
+    the anomalous plateau lives. Each N is radially averaged; the in-window
+    points are pooled into one count-weighted slope. Returns (eta, err, npts,
+    nN)."""
     import glob
     files = sorted(glob.glob(pattern),
                    key=lambda p: int(re.search(r"N=(\d+)", p).group(1)))
     if not files:
         sys.exit(f"no legacy files match {pattern}")
     os.makedirs(outdir, exist_ok=True)
-    lo, hi = lo_frac * p8, hi_frac * p8
     q, gi, ge, Ns = [], [], [], []          # ALL points (colored by N in plot)
     for f in files:
         qmag, G, N, L, a = load_legacy(f)
@@ -404,8 +401,7 @@ def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
     inw = (q >= lo) & (q <= hi)
     eta, err, npts = fit_pooled(q[inw], gi[inw], ge[inw])
     nN = len(set(Ns.tolist()))
-    print(f"\nCOMBINED (legacy, q8~p8={p8}, window=[{lo:.3f},{hi:.3f}]"
-          f"=[q8/{p8/lo:.1f}, q8/{p8/hi:.1f}]): "
+    print(f"\nCOMBINED (legacy, q8~p8={p8}, legacy window=[{lo:.3f},{hi:.3f}]): "
           f"eta = {eta:.3f} +/- {err:.3f}   "
           f"({nN} sizes N={Ns.min()}-{Ns.max()}, {npts} in-window pts)")
     plot_combined(q, gi, ge, Ns, eta, err,
