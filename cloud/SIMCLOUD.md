@@ -79,6 +79,37 @@ it the right cluster for both goals.
 On x86, cap the grid at **N ≤ 64** and run big-`N` cells locally; on M2 Ultra
 the whole grid is feasible (even N=120 fits one job; AS max timeout is 7 d).
 
+### Intra-chain parallelism for large N (`it=`) — macOS only, avoid on Linux
+
+By default cores = independent **replicas** (`nt=`), which buys *statistics*,
+not per-cell speed. The engine also has an **inner-thread** knob `it=` that
+parallelizes the `O(L²)` Metropolis step loop ([membrane.c](../src/membrane.c)) —
+this is the *legacy* strategy (`legacy/simulate.c` ran one chain, inner loop
+parallel, no replicas). Run `nt=1 it=<cores>` for one chain, or hybrid `nt*it=cores`.
+
+**It helps only on macOS (LLVM libomp); it *regresses* on Linux (GCC libgomp)** —
+which is what every Simcloud cluster runs. Measured:
+
+| platform / N | it=1 | it=8 | it=16 |
+|---|---|---|---|
+| M4 laptop, macOS/libomp, N=120 | 64.9 s | **30.0 s** (2.2×) | — |
+| M4 laptop, macOS/libomp, N=96 | 26.8 s | **15.6 s** (1.7×) | — |
+| M2 Ultra, Linux/libgomp, N=96 | 29.4 s | 54.9 s ✗ | — |
+| x86, Linux/libgomp, N=72 | 16.5 s | 20.8 s ✗ | 48.5 s ✗ |
+
+libgomp's per-step fork/join cost grows with thread count and swamps the gain
+(the step loop is re-entered `~L²` times per sweep). So:
+
+- **On Simcloud (Linux): always use replicas, `it=1`** (the default). Don't set `IT>1`.
+- `it=` is useful only for large-N runs **on a Mac** (`make` there links libomp).
+- A persistent-team rewrite (fork once per sweep-run, `#pragma omp for` inside)
+  would remove the per-step fork/join and likely make it pay on libgomp too —
+  future work. The knob is default-off and gated (`LL≥20000`), so it never
+  affects the replica path.
+
+Correctness is unaffected — `it=1` vs `it=8` output is bitwise identical (RNG
+stays serial; only the reduction sum reorders).
+
 ## Cluster-specific setup
 
 ### `mr2` — x86 (Sparks, NV)

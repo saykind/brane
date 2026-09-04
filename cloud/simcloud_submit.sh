@@ -38,6 +38,10 @@ NS="${NS:-32,40,48,56,64,80,96,120}"
 P8S="${P8S:-0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}"
 export NS P8S
 export THERM="${THERM:-100}" SWEEPS="${SWEEPS:-4000}" EPS="${EPS:-0.005}" MINSW="${MINSW:-100}"
+# replicas (NT) x inner-threads (IT) per cell. Default: NT=CPUS replicas, IT=1
+# (statistics). For large-N reach set NT=1 IT=$CPUS (fewer replicas, one fast
+# chain -- intra-chain parallelism, engine 'it=' knob, wins for N>=~70).
+NT="${NT:-$CPUS}"; IT="${IT:-1}"
 
 TAG="${TAG:-brane-grid}"                         # output bundles tagged with this
 
@@ -84,7 +88,7 @@ fi
 # have no spaces, so this is safe). Each job derives its cell from $SC_BATCH_ID.
 owner_flag=(); [ -n "$OWNER" ] && owner_flag=(--owner "$OWNER")
 vpc_flag=();   [ -n "$NET" ]   && vpc_flag=(--denali-vpc "ipv4_network_id=$NET")
-envprefix="NS=$NS P8S=$P8S THERM=$THERM SWEEPS=$SWEEPS EPS=$EPS MINSW=$MINSW OUTDIR=/out"
+envprefix="NS=$NS P8S=$P8S THERM=$THERM SWEEPS=$SWEEPS EPS=$EPS MINSW=$MINSW NT=$NT IT=$IT OUTDIR=/out"
 echo "--- posting batch of $COUNT jobs ---"
 batch=$(simcloud -q batch post \
   --count "$COUNT" \

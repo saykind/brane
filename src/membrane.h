@@ -30,6 +30,7 @@ typedef struct {
     int      n;          /* half size of move-selection zone (l = 2n+1)    */
     double   p8;         /* interaction strength (0 < p8 < pi)             */
     int      nthreads;   /* number of independent replicas / OpenMP threads*/
+    int      inner;      /* threads per replica for the O(L^2) step loop   */
     long     therm;      /* thermalization sweeps per replica              */
     long     sweeps;     /* measurement sweeps per replica                 */
     int      meas_every; /* take a measurement every this many sweeps      */

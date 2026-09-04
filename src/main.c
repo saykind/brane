@@ -2,13 +2,18 @@
  * main.c -- Replica-parallel driver for the Fourier Monte Carlo membrane
  * simulation.
  *
- * Parallelization strategy: instead of parallelizing the O(L^2) inner loop
- * of a single Markov chain (the original approach, which drowned in OpenMP
- * fork/join overhead at small L), we run `nthreads` *independent* Markov
- * chains ("replicas"), one per core, each with its own PCG stream.  Every
- * chain thermalizes and samples on its own; the Green function and Poisson
- * correlators are averaged across chains at the end.  This scales almost
- * linearly and needs no per-step synchronization.
+ * Parallelization strategy: by default we run `nthreads` *independent* Markov
+ * chains ("replicas"), one per core, each with its own PCG stream -- this
+ * scales almost linearly and needs no per-step synchronization, and is the
+ * right choice for statistics (more replicas = smaller error bars).
+ *
+ * For the large-N *reach* goal a single chain is the bottleneck (one sweep is
+ * O(L^4) and sequential), so `inner` (it=) additionally parallelizes the
+ * O(L^2) step loop across cores. Use nt=1 it=<cores> for one fast chain, or a
+ * hybrid nt*it = cores. This only pays off on macOS (LLVM libomp) at large N;
+ * on Linux (GCC libgomp) per-step fork/join is too costly and it regresses --
+ * there, stick with replicas (it=1). Gated by lattice size (BRANE_PAR_MIN_LL).
+ * See cloud/SIMCLOUD.md for measurements.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +37,7 @@ static Config default_config(void) {
      * barrier and add nothing (see tools/scaling.py). Capped by availability. */
     int mx = omp_get_max_threads();
     c.nthreads = mx < 12 ? mx : 12;
+    c.inner = 1;         /* threads per replica (intra-chain); 1 = replica-only */
     c.therm = 80;
     c.sweeps = 2000;     /* max measurement sweeps (cap for adaptive run)   */
     c.meas_every = 1;
@@ -52,7 +58,9 @@ static void usage(const Config *d) {
     printf("  N=<int>           half lattice size, L=2N+1        (%d)\n", d->N);
     printf("  n=<int>           half move-zone size, l=2n+1      (=N)\n");
     printf("  p8=<float>        interaction strength, 0<p8<pi    (%.2f)\n", d->p8);
-    printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
+    printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);
+    printf("  it=<int>          threads per replica (large-N)     (%d)\n", d->inner);
+    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
     printf("  sweeps=<int>      MAX measurement sweeps (cap)     (%ld)\n", d->sweeps);
     printf("  eps=<float>       target rel. error on Delta2; 0=off (%.3f)\n", d->eps);
     printf("  minsweeps=<int>   min sweeps before stopping       (%ld)\n", d->min_sweeps);
@@ -77,6 +85,7 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "n=%d", &cfg.n) == 1) continue;
         if (sscanf(argv[i], "p8=%lf", &cfg.p8) == 1) continue;
         if (sscanf(argv[i], "nt=%d", &cfg.nthreads) == 1) continue;
+        if (sscanf(argv[i], "it=%d", &cfg.inner) == 1) continue;
         if (sscanf(argv[i], "therm=%ld", &cfg.therm) == 1) continue;
         if (sscanf(argv[i], "sweeps=%ld", &cfg.sweeps) == 1) continue;
         if (sscanf(argv[i], "eps=%lf", &cfg.eps) == 1) continue;
@@ -91,14 +100,16 @@ int main(int argc, char *argv[]) {
     }
     if (cfg.n <= 0 || cfg.n > cfg.N) cfg.n = cfg.N;
     if (cfg.nthreads < 1) cfg.nthreads = 1;
+    if (cfg.inner < 1) cfg.inner = 1;
     if (cfg.meas_every < 1) cfg.meas_every = 1;
     omp_set_num_threads(cfg.nthreads);
+    if (cfg.inner > 1) omp_set_max_active_levels(2);  /* allow nested inner teams */
 
     Geometry geo = geometry_make(&cfg);
     int L = geo.L;
 
-    printf("brane: N=%d L=%d n=%d p8=%.3f  replicas=%d\n",
-           cfg.N, L, cfg.n, cfg.p8, cfg.nthreads);
+    printf("brane: N=%d L=%d n=%d p8=%.3f  replicas=%d inner=%d (cores=%d)\n",
+           cfg.N, L, cfg.n, cfg.p8, cfg.nthreads, cfg.inner, cfg.nthreads * cfg.inner);
     printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
            cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
 

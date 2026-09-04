@@ -28,6 +28,13 @@
 
 #define IDX(q1, q2, L) ((q1) * (L) + (q2))
 
+/* Intra-chain (single-mode step) parallelism kicks in only once the O(L^2)
+ * step loop is large enough to amortize per-step fork/join. Measured crossover
+ * on M4/M2 Ultra is around N~70 (L~141): below it the per-step OpenMP region
+ * costs more than it saves and the replica-parallel path (one chain per core)
+ * is strictly better. LL = L*L = (2N+1)^2; 20000 ~ N=70. See cloud/SIMCLOUD.md. */
+#define BRANE_PAR_MIN_LL 20000
+
 /* ---- geometry -------------------------------------------------------- */
 Geometry geometry_make(const Config *cfg) {
     Geometry geo;
@@ -149,7 +156,14 @@ static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg
     double complex z = (pcg32_double(&rep->rng) - 0.5) +
                        (pcg32_double(&rep->rng) - 0.5) * I;
 
+    /* The energy change is a sum over all q of independent O(1) terms, each
+     * also producing dS[qi]. That makes it a parallel reduction -- the only
+     * data-parallel hotspot in an otherwise sequential Markov step. Gate on
+     * size so small lattices keep the zero-overhead serial path. */
+    int par = (cfg->inner > 1) && ((long)L * L >= BRANE_PAR_MIN_LL);
     double w = 0.0;
+    #pragma omp parallel for reduction(+:w) num_threads(cfg->inner) \
+            if(par) schedule(static) collapse(2)
     for (int q1 = 0; q1 < L; q1++)
         for (int q2 = 0; q2 < L; q2++) {
             int qi = IDX(q1, q2, L);
@@ -182,6 +196,7 @@ static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg
         rep->accepted++;
         h[ki] += d * z;
         h[IDX(wrap[L - k1], wrap[L - k2], L)] += d * conj(z);
+        #pragma omp parallel for num_threads(cfg->inner) if(par) schedule(static)
         for (int i = 0; i < L * L; i++) S[i] += dS[i];
     }
 }

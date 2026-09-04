@@ -20,6 +20,7 @@ EPS="${EPS:-0.005}"                             # Delta2 rel-error convergence t
 MINSW="${MINSW:-100}"                           # floor before convergence can trip
 OUTDIR="${OUTDIR:-/out}"                         # collected via --output-to-bundle
 NT="${NT:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)}"  # replicas = cores
+IT="${IT:-1}"                                    # inner threads/replica (large-N: nt=1 it=cores)
 SRCDIR="${SRCDIR:-/brane}"                       # where the source bundle unpacks
 
 # --- toolchain (a package bundle usually provides gcc/make already) ---------
@@ -46,7 +47,7 @@ pdir=$(printf 'p%.2f' "$P")
 out="$OUTDIR/N$N/$pdir/data.dat"
 mkdir -p "$(dirname "$out")"
 
-echo ">>> batch index $i -> N=$N p8=$P nt=$NT on $(hostname) ($(nproc) cores)"
-./brane "N=$N" "p8=$P" "nt=$NT" "therm=$THERM" "sweeps=$SWEEPS" \
+echo ">>> batch index $i -> N=$N p8=$P nt=$NT it=$IT on $(hostname) ($(nproc) cores)"
+./brane "N=$N" "p8=$P" "nt=$NT" "it=$IT" "therm=$THERM" "sweeps=$SWEEPS" \
         "eps=$EPS" "minsweeps=$MINSW" "out=$out"
 echo ">>> wrote $out"
