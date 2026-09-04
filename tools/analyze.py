@@ -246,7 +246,7 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
     # NOTE: default window stops at the crossover q8~p8 (not above it). The
     # right-hand eta_eff(q) panel is there so you can judge whether even p8 is
     # too high a ceiling and tighten --qmax below the crossover.
-    qmin = qmin_arg if qmin_arg is not None else 3 * a
+    qmin = qmin_arg if qmin_arg is not None else 4 * a
     qmax = qmax_arg if qmax_arg is not None else p8
 
     qr, Gr, Ginv_r, cnt = radial_average(qmag, G, nbins)
