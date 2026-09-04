@@ -123,6 +123,18 @@ def collect_all(pattern="data/hm_*.dat"):
     return pts
 
 
+def scattered_to_grid(pts):
+    """Reshape scattered (N,p8,eta) points onto a regular grid (NaN if missing)."""
+    Ns = sorted(set(p[0] for p in pts))
+    p8s = sorted(set(round(p[1], 3) for p in pts))
+    eta = np.full((len(Ns), len(p8s)), np.nan)
+    iN = {n: i for i, n in enumerate(Ns)}
+    iP = {p: j for j, p in enumerate(p8s)}
+    for N, p8, e in pts:
+        eta[iN[N], iP[round(p8, 3)]] = e
+    return Ns, p8s, eta
+
+
 def plot_scattered(pts, png):
     """Colormap from an arbitrary (possibly irregular) set of (N,p8,eta) points
     via Delaunay triangulation -- lets us combine grids from multiple runs."""
@@ -176,13 +188,20 @@ def main():
 
     if args.replot_all:
         pts = collect_all()
-        # also dump a combined CSV of scattered points
         with open("data/heatmap_all.csv", "w") as f:
             f.write("N,p8,eta\n")
             for N, p8, e in sorted(pts):
                 f.write(f"{N},{p8:.3f},{e:.4f}\n")
         print(f"[csv] wrote data/heatmap_all.csv ({len(pts)} cells)")
-        plot_scattered(pts, args.png)
+        if args.refine > 1:
+            Ns, p8s, eta = scattered_to_grid(pts)
+            if np.isnan(eta).any():
+                print("  grid incomplete -> triangulation plot (no bilinear refine)")
+                plot_scattered(pts, args.png)
+            else:
+                plot_map(Ns, p8s, eta, args.png, refine=args.refine)
+        else:
+            plot_scattered(pts, args.png)
         return
 
     if args.from_csv:
