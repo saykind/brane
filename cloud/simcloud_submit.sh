@@ -37,7 +37,7 @@ TOOLCHAIN="${TOOLCHAIN:-1}"                      # 1=ship build-essential bundle
 NS="${NS:-32,40,48,56,64,80,96,120}"
 P8S="${P8S:-0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}"
 export NS P8S
-export THERM="${THERM:-100}" SWEEPS="${SWEEPS:-4000}" EPS="${EPS:-0.005}" MINSW="${MINSW:-100}"
+export THERM="${THERM:-300}" SWEEPS="${SWEEPS:-4000}" EPS="${EPS:-0.005}" MINSW="${MINSW:-100}"
 # replicas (NT) x inner-threads (IT) per cell. Default: NT=CPUS replicas, IT=1
 # (statistics). For large-N reach set NT=1 IT=$CPUS (fewer replicas, one fast
 # chain -- intra-chain parallelism, engine 'it=' knob, wins for N>=~70).

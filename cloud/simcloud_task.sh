@@ -14,7 +14,7 @@ set -euo pipefail
 # --- grid definition (must match simcloud_submit.sh) ------------------------
 NS="${NS:-32,40,48,56,64,80,96,120}"           # lattice sizes (L=2N+1)
 P8S="${P8S:-0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}"  # couplings (q8~p8)
-THERM="${THERM:-100}"                           # thermalization sweeps
+THERM="${THERM:-300}"                           # thermalization sweeps (legacy MTH=300)
 SWEEPS="${SWEEPS:-4000}"                         # measurement-sweep cap per cell
 EPS="${EPS:-0.005}"                             # Delta2 rel-error convergence target
 MINSW="${MINSW:-100}"                           # floor before convergence can trip

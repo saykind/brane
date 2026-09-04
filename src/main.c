@@ -38,14 +38,14 @@ static Config default_config(void) {
     int mx = omp_get_max_threads();
     c.nthreads = mx < 12 ? mx : 12;
     c.inner = 1;         /* threads per replica (intra-chain); 1 = replica-only */
-    c.therm = 80;
+    c.therm = 300;       /* thermalization sweeps (matches legacy MTH=300)   */
     c.sweeps = 2000;     /* max measurement sweeps (cap for adaptive run)   */
     c.meas_every = 1;
     c.d0 = 2.6;
     c.seed = 12345u;
     c.verbose = 0;
-    c.eps = 0.01;        /* target rel. stat. error on Delta2 (0 disables)  */
-    c.min_sweeps = 40;   /* don't stop before this many measurement sweeps   */
+    c.eps = 0.005;       /* target rel. stat. error on Delta2 (0 disables)  */
+    c.min_sweeps = 200;  /* don't stop before this many measurement sweeps   */
     c.block = 20;        /* sweeps between convergence checks                */
     return c;
 }

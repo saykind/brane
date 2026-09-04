@@ -26,7 +26,7 @@ NET="${NET:-e57cff0a-d781-4250-8ca5-065e283c8da1}" \
 TOOLCHAIN="${TOOLCHAIN:-0}" \
 CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-8h}" \
 NS="${NS:-80,90,100,110,120}" P8S="${P8S:-0.3,0.4,0.5}" \
-THERM="${THERM:-100}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
+THERM="${THERM:-300}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
 NT="${NT:-16}" IT="${IT:-1}" \
 TAG="${TAG:-brane-overnight}" \
 bash "$here/simcloud_submit.sh"
