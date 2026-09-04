@@ -207,6 +207,144 @@ def fit_eta_crossover(qr, Ginv_r, cnt, qlo, qhi, eta0=0.75, q8_0=None):
 
 
 # ----------------------------------------------------------------------------
+# Combined (multi-N) fit at fixed p8
+# ----------------------------------------------------------------------------
+# Different N have grid spacing a = 2*pi/L = 2*pi/(2N+1), so a larger N reaches
+# *smaller* q. At a FIXED p8 (same coupling) the anomalous law G^-1 ~ q^(4-eta)
+# is a bulk, N-independent property, so pooling the radial-averaged points from
+# every N -- each kept only inside its own scaling window [3a_N, p8] -- gives a
+# far denser, wider q-range than any single lattice and a tighter slope. We only
+# ever pool cells with the SAME p8 (mixing couplings mixes crossover scales).
+def collect_pooled(p8_target, pattern="data/N*/p*/data.dat", nbins=60,
+                   tol=1e-3):
+    """Pool radial-averaged (q_r, G^-1, err, N) points from every cell whose p8
+    matches p8_target, each restricted to its own window [3 a_N, p8]."""
+    import glob
+    q, gi, ge, Ns = [], [], [], []
+    for f in sorted(glob.glob(pattern)):
+        qmag, G, Gerr, Ginv, header = load(f)
+        p8 = float(header["p8"])
+        if abs(p8 - p8_target) > tol:
+            continue
+        N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
+        qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins, Gerr)
+        m = (qr >= 3 * a) & (qr <= p8) & (Ginv_r > 0) & np.isfinite(Ginv_r)
+        q.extend(qr[m]); gi.extend(Ginv_r[m])
+        ge.extend(Ginv_err[m]); Ns.extend([N] * int(m.sum()))
+    return (np.array(q), np.array(gi), np.array(ge), np.array(Ns, int))
+
+
+def fit_pooled(q, gi, ge):
+    """Inverse-variance-weighted log-log slope of the pooled points.
+    Returns (eta, err, npts); eta is None if fewer than 3 usable points."""
+    m = (q > 0) & (gi > 0) & np.isfinite(gi)
+    if m.sum() < 3:
+        return None, None, int(m.sum())
+    x, y = np.log(q[m]), np.log(gi[m])
+    if np.all(ge[m] > 0):
+        sigma = ge[m] / gi[m]          # error of log(G^-1)
+        w = 1.0 / sigma
+    else:
+        w = np.ones_like(x)
+    coef, cov = np.polyfit(x, y, 1, w=w, cov=True)
+    return 4.0 - coef[0], float(np.sqrt(cov[0, 0])), int(m.sum())
+
+
+def plot_combined(q, gi, ge, Ns, eta, err, p8, png):
+    """Overlay every N's pooled points (colored by N) with the single combined
+    slope fit q^(4-eta)."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib missing; skipping combined plot.")
+        return
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    uN = sorted(set(Ns.tolist()))
+    cmap = plt.get_cmap("viridis")
+    for i, n in enumerate(uN):
+        s = Ns == n
+        c = cmap(i / max(1, len(uN) - 1))
+        ax.errorbar(q[s], gi[s], yerr=ge[s], fmt="o", ms=3.5, color=c,
+                    ecolor=c, elinewidth=0.7, capsize=1.5, alpha=0.9,
+                    label=f"N={n}")
+    qq = np.logspace(np.log10(q.min()), np.log10(q.max()), 200)
+    # anchor the reference lines at the pooled geometric mean
+    q0 = float(np.exp(np.mean(np.log(q)))); g0 = float(np.exp(np.mean(np.log(gi))))
+    ax.loglog(qq, g0 * (qq / q0) ** 4, "--", color="C3", lw=1.2,
+              label=r"$q^4$ (harmonic)")
+    if eta is not None:
+        ax.loglog(qq, g0 * (qq / q0) ** (4 - eta), "-", color="k", lw=2,
+                  label=rf"combined fit $\eta={eta:.3f}\pm{err:.3f}$")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel(r"$q_r=|q|$"); ax.set_ylabel(r"$G^{-1}(q_r)$")
+    ax.set_title(rf"Combined multi-$N$ fit at $p_8={p8:.2f}$  "
+                 rf"({len(uN)} sizes, {len(q)} pts)")
+    ax.legend(frameon=False, fontsize=8, ncol=2)
+    ax.grid(True, which="both", alpha=0.3)
+    fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
+    print(f"[plot] wrote {png}")
+
+
+def combined_all(pattern="data/N*/p*/data.dat", nbins=60, outdir="plots/combined"):
+    """Run the pooled fit for every distinct p8 present; write one overlay per
+    p8, a summary eta(p8) curve, and a CSV. Returns the list of result dicts."""
+    import glob
+    p8s = sorted({round(float(load(f)[4]["p8"]), 4)
+                  for f in glob.glob(pattern)})
+    if not p8s:
+        sys.exit(f"no files match {pattern}")
+    os.makedirs(outdir, exist_ok=True)
+    rows = []
+    for p8 in p8s:
+        q, gi, ge, Ns = collect_pooled(p8, pattern, nbins)
+        if len(q) < 3:
+            print(f"  p8={p8:.2f}: only {len(q)} pooled pts, skipping")
+            continue
+        eta, err, npts = fit_pooled(q, gi, ge)
+        nN = len(set(Ns.tolist()))
+        rows.append(dict(p8=p8, eta=eta, err=err, npts=npts, nN=nN))
+        estr = f"{eta:.3f} +/- {err:.3f}" if eta is not None else "n/a"
+        print(f"  p8={p8:.2f}: eta={estr}  ({nN} sizes, {npts} pts)")
+        plot_combined(q, gi, ge, Ns, eta, err, p8,
+                      os.path.join(outdir, f"p{p8:.2f}.png"))
+    # summary eta(p8)
+    csv = os.path.join(outdir, "combined_eta.csv")
+    with open(csv, "w") as f:
+        f.write("p8,eta,err,nN,npts\n")
+        for r in rows:
+            f.write(f"{r['p8']:.2f},{r['eta']:.4f},{r['err']:.4f},"
+                    f"{r['nN']},{r['npts']}\n")
+    print(f"[csv] wrote {csv}")
+    _plot_eta_of_p8(rows, os.path.join(outdir, "eta_vs_p8.png"))
+    return rows
+
+
+def _plot_eta_of_p8(rows, png):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    good = [r for r in rows if r["eta"] is not None]
+    if not good:
+        return
+    p = np.array([r["p8"] for r in good])
+    e = np.array([r["eta"] for r in good])
+    er = np.array([r["err"] for r in good])
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.errorbar(p, e, yerr=er, fmt="o-", color="C0", capsize=3,
+                label=r"combined multi-$N$ fit")
+    ax.set_xlabel(r"$p_8$"); ax.set_ylabel(r"combined-fit $\eta$")
+    ax.set_title(r"Pooled-over-$N$ exponent $\eta(p_8)$")
+    ax.grid(alpha=0.3); ax.legend(frameon=False)
+    fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
+    print(f"[plot] wrote {png}")
+
+
+# ----------------------------------------------------------------------------
 def plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax,
          out_png, out_gp, datfile, Ginv_err=None):
     try:
@@ -334,7 +472,28 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/N*/p*/data.dat",
                     help="batch-analyze every matching file (default data/N*/p*/data.dat)")
+    ap.add_argument("--combined", action="store_true",
+                    help="pool all N at each p8 into one weighted log-log fit; "
+                         "writes plots/combined/{p<p8>.png, eta_vs_p8.png, combined_eta.csv}")
+    ap.add_argument("--combined-p8", type=float, default=None,
+                    help="combined fit for a single p8 only (implies --combined)")
     args = ap.parse_args()
+
+    if args.combined or args.combined_p8 is not None:
+        if args.combined_p8 is not None:
+            q, gi, ge, Ns = collect_pooled(args.combined_p8, nbins=args.nbins)
+            if len(q) < 3:
+                sys.exit(f"only {len(q)} pooled points at p8={args.combined_p8}")
+            eta, err, npts = fit_pooled(q, gi, ge)
+            nN = len(set(Ns.tolist()))
+            print(f"p8={args.combined_p8:.2f}: eta={eta:.3f} +/- {err:.3f}  "
+                  f"({nN} sizes, {npts} pts)")
+            os.makedirs("plots/combined", exist_ok=True)
+            plot_combined(q, gi, ge, Ns, eta, err, args.combined_p8,
+                          f"plots/combined/p{args.combined_p8:.2f}.png")
+        else:
+            combined_all(nbins=args.nbins)
+        return
 
     if args.all:
         import glob
