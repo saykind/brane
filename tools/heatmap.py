@@ -21,6 +21,7 @@ Usage:
     uv run tools/heatmap.py --replot-all --refine 2          # smoother map
 """
 import argparse
+import os
 import subprocess
 import numpy as np
 
@@ -87,13 +88,12 @@ def plot_eta(pts, png, refine=0):
         plot_tri, plot_E = triang, E
 
     fig, ax = plt.subplots(figsize=(8.5, 6))
-    tcf = ax.tricontourf(plot_tri, plot_E, levels=np.linspace(0.35, 0.9, 23),
+    tcf = ax.tricontourf(plot_tri, plot_E, levels=np.linspace(0.15, 0.9, 26),
                          cmap="viridis", extend="both")
     fig.colorbar(tcf, ax=ax, label=r"effective $\eta$")
     try:
-        cs = ax.tricontour(plot_tri, plot_E, levels=[0.5, 0.6, 0.7, 0.78],
-                           colors="white", linewidths=[1, 1, 1, 2],
-                           linestyles=["--", "--", "--", "-"])
+        cs = ax.tricontour(plot_tri, plot_E, levels=[0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                           colors="white", linewidths=1.0, linestyles="--")
         ax.clabel(cs, fmt="%.2f", fontsize=8)
     except Exception:
         pass
@@ -101,13 +101,13 @@ def plot_eta(pts, png, refine=0):
     ax.set_xlabel(r"$p_8$  (coupling / crossover $q_8\sim p_8$)")
     ax.set_ylabel(r"$N$  (size, $L=2N+1$)")
     tag = f"  [x{refine} refined]" if refine else ""
-    ax.set_title(rf"Effective $\eta(N, p_8)$ -- {len(pts)} runs combined{tag} "
-                 r"(white line = 0.78)")
+    ax.set_title(rf"Effective $\eta(N, p_8)$ -- {len(pts)} runs combined{tag}")
     fig.tight_layout(); fig.savefig(png, dpi=140)
     print(f"[plot] wrote {png}  ({len(pts)} cells)")
 
 
-def write_csv(pts, path="data/heatmap_all.csv"):
+def write_csv(pts, path="plots/heatmap_all.csv"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write("N,p8,eta\n")
         for N, p8, e in sorted(pts):
@@ -122,12 +122,13 @@ def main():
     ap.add_argument("--nt", type=int, default=12)
     ap.add_argument("--therm", type=int, default=40)
     ap.add_argument("--sweeps", type=int, default=60)
-    ap.add_argument("--png", default="data/heatmap.png")
+    ap.add_argument("--png", default="plots/heatmap.png")
     ap.add_argument("--replot-all", action="store_true",
                     help="replot EVERY data/hm_*.dat cell on disk (combine all runs)")
     ap.add_argument("--refine", type=int, default=0,
                     help="triangulation subdivisions for a smoother map (no new sims)")
     args = ap.parse_args()
+    os.makedirs("plots", exist_ok=True)
 
     if not args.replot_all:
         Ns = [int(x) for x in args.Ns.split(",")]

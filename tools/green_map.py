@@ -49,22 +49,16 @@ def load_grid(path):
     return qax, G2, Gi2, header, a
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("datfile")
-    ap.add_argument("--png", default=None)
-    args = ap.parse_args()
-
-    qax, G2, Gi2, header, a = load_grid(args.datfile)
+def render(datfile, png=None):
+    """Write a G / G^-1 heatmap figure for one .dat file."""
+    import os
+    qax, G2, Gi2, header, a = load_grid(datfile)
     p8 = header.get("p8", "?"); N = header.get("N", "?")
 
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from matplotlib.colors import LogNorm
-    except ImportError:
-        sys.exit("matplotlib required for green_map (uv sync).")
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
 
     ext = [qax[0] - a / 2, qax[-1] + a / 2, qax[0] - a / 2, qax[-1] + a / 2]
     fig, (axG, axI) = plt.subplots(1, 2, figsize=(12, 5.2))
@@ -84,14 +78,48 @@ def main():
                      norm=LogNorm(vmin=imin, vmax=imax), aspect="equal")
     fig.colorbar(imI, ax=axI, label=r"$G^{-1}(q)$")
     axI.set_title(r"Inverse Green $G^{-1}(q_x,q_y)$")
-
     for ax in (axG, axI):
         ax.set_xlabel(r"$q_x$"); ax.set_ylabel(r"$q_y$")
 
     fig.tight_layout()
-    png = args.png or (args.datfile.rsplit(".", 1)[0] + "_green.png")
+    os.makedirs("plots", exist_ok=True)
+    base = os.path.splitext(os.path.basename(datfile))[0]
+    png = png or f"plots/{base}_green.png"
     fig.savefig(png, dpi=140)
-    print(f"[plot] wrote {png}")
+    plt.close(fig)
+    return png
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("datfile", nargs="?",
+                    help="a .dat file; omit with --all")
+    ap.add_argument("--png", default=None)
+    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/hm_*.dat",
+                    help="batch-render every matching file (default data/hm_*.dat)")
+    args = ap.parse_args()
+
+    try:
+        import matplotlib  # noqa: F401  (fail early with a clear message)
+    except ImportError:
+        sys.exit("matplotlib required for green_map (uv sync).")
+
+    if args.all:
+        import glob
+        files = sorted(glob.glob(args.all))
+        if not files:
+            sys.exit(f"no files match {args.all}")
+        for i, f in enumerate(files, 1):
+            try:
+                png = render(f)
+                print(f"[{i}/{len(files)}] {png}")
+            except Exception as e:
+                print(f"[{i}/{len(files)}] skip {f}: {e}")
+        return
+
+    if not args.datfile:
+        sys.exit("give a .dat file, or use --all")
+    print(f"[plot] wrote {render(args.datfile, args.png)}")
 
 
 if __name__ == "__main__":

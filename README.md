@@ -124,9 +124,9 @@ uv run tools/green_map.py data/N=40.dat   # heatmaps of G(qx,qy) and G^-1(qx,qy)
 ### How η depends on N and p8
 
 ```bash
-uv run tools/explore.py            # sweeps N and p8, writes data/explore.{png,csv}
+uv run tools/explore.py            # sweeps N and p8, writes plots/explore.{png,csv}
 uv run tools/explore.py --quick    # small/fast grids
-uv run tools/heatmap.py            # 2D colormap eta(N, p8), data/heatmap.{png,csv}
+uv run tools/heatmap.py            # 2D colormap eta(N,p8) -> plots/heatmap.png + plots/heatmap_all.csv
 ```
 
 Produces `η` vs `N` (fixed `p8`), `η` vs `p8` (fixed `N`), and a 2D `η(N,p8)`
@@ -208,7 +208,7 @@ the original only failed to compile because Apple clang needs libomp flags.
 ### Core scaling
 
 ```bash
-uv run tools/scaling.py --N 40      # table + data/scaling.png
+uv run tools/scaling.py --N 40      # table + plots/scaling.png
 ```
 
 Replica parallelism at N=40 on the M4 Max (12 P + 4 E cores): linear to ~2
@@ -252,7 +252,12 @@ lib/                method papers (Tröster; Los et al.)
 Makefile            OpenMP autodetection (macOS libomp / Linux gcc)
 pyproject.toml      Python analysis env (uv sync)
 run.sh              multi-size sweep
+data/               raw simulation output (.dat only) -- gitignored
+plots/              generated figures + derived CSVs -- gitignored
 ```
+
+`data/` holds only raw `.dat` from the C engine (one file per run/cell);
+every figure and derived CSV goes to `plots/`. Both are gitignored.
 
 ## Notes
 

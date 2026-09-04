@@ -43,6 +43,7 @@ Usage
     python3 tools/analyze.py data/N=40.dat --qmin 0.23 --qmax 0.40
 """
 import argparse
+import os
 import sys
 import numpy as np
 
@@ -278,8 +279,10 @@ def main():
                   f"   q8={cross['q8']:.3f}   [heuristic ansatz, cross-check only]")
         print(f"Poisson ratio  : {header.get('nu','?')}  (from simulation)")
 
-    png = args.png or (args.datfile.rsplit(".", 1)[0] + ".png")
-    gp = args.datfile.rsplit(".", 1)[0] + ".gp"
+    os.makedirs("plots", exist_ok=True)
+    base = os.path.splitext(os.path.basename(args.datfile))[0]
+    png = args.png or f"plots/{base}.png"
+    gp = f"plots/{base}.gp"
     plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, args.datfile)
 
     # expose values for scripting

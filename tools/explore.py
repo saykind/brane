@@ -23,6 +23,7 @@ Usage:
     uv run tools/explore.py --quick             # small/fast grids
 """
 import argparse
+import os
 import subprocess
 import sys
 import numpy as np
@@ -78,7 +79,6 @@ def plot(rows_N, rows_p8, p8_fixed, N_fixed, out_png):
         eta = np.array([r["eta"] for r in rows])
         err = np.array([r["err"] for r in rows])
         reliable = np.array([r["err"] < 0.06 for r in rows])
-        ax.axhline(0.78, ls="--", color="0.5", label=r"universal $\eta\approx0.78$")
         ax.axhline(0.0, color="0.85", lw=0.8)
         # filled = statistically precise fit, hollow = large error bar
         ax.errorbar(xs[reliable], eta[reliable], yerr=err[reliable], fmt="o",
@@ -105,7 +105,7 @@ def main():
     ap.add_argument("--p8fix", type=float, default=0.4)
     ap.add_argument("--Nfix", type=int, default=40)
     ap.add_argument("--quick", action="store_true")
-    ap.add_argument("--png", default="data/explore.png")
+    ap.add_argument("--png", default="plots/explore.png")
     args = ap.parse_args()
 
     if args.quick:
@@ -122,13 +122,14 @@ def main():
     rows_p8 = sweep([(args.Nfix, p8) for p8 in p8s], args.nt, args.therm, args.sweeps)
 
     # CSV
-    with open("data/explore.csv", "w") as f:
+    os.makedirs("plots", exist_ok=True)
+    with open("plots/explore.csv", "w") as f:
         f.write("scan,N,p8,eta,err,spread,nu\n")
         for r in rows_N:
             f.write(f"N,{r['N']},{r['p8']},{r['eta']:.4f},{r['err']:.4f},{r['spread']:.4f},{r['nu']:.4f}\n")
         for r in rows_p8:
             f.write(f"p8,{r['N']},{r['p8']},{r['eta']:.4f},{r['err']:.4f},{r['spread']:.4f},{r['nu']:.4f}\n")
-    print("[csv] wrote data/explore.csv")
+    print("[csv] wrote plots/explore.csv")
 
     plot(rows_N, rows_p8, args.p8fix, args.Nfix, args.png)
 

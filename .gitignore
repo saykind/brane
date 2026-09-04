@@ -10,6 +10,7 @@ brane
 test_correctness
 data/
 eta/
+plots/
 fit.log
 .DS_Store
 __pycache__/

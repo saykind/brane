@@ -35,7 +35,7 @@ def main():
     ap.add_argument("--reps", type=int, default=2, help="repeats; take best time")
     ap.add_argument("--binary", default="./brane")
     ap.add_argument("--threads", default="1,2,4,6,8,10,12,14,16")
-    ap.add_argument("--png", default="data/scaling.png")
+    ap.add_argument("--png", default="plots/scaling.png")
     args = ap.parse_args()
 
     threads = [int(x) for x in args.threads.split(",")]
@@ -96,6 +96,8 @@ def main():
     ax2.grid(alpha=0.3)
 
     fig.tight_layout()
+    import os
+    os.makedirs(os.path.dirname(args.png) or ".", exist_ok=True)
     fig.savefig(args.png, dpi=140)
     print(f"\n[plot] wrote {args.png}")
 
