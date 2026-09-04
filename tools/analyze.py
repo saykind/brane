@@ -70,22 +70,43 @@ def load(path):
             f"      ./brane N=40 p8=0.4 out={path}\n"
         )
     data = np.loadtxt(path, comments="#")
-    return data[:, 4], data[:, 5], data[:, 6], header  # qmag, G, Ginv, header
+    # columns: q1 q2 qx qy qmag G Gerr Ginv   (Gerr added; older files lack it)
+    if data.shape[1] >= 8:
+        return data[:, 4], data[:, 5], data[:, 6], data[:, 7], header  # qmag,G,Gerr,Ginv
+    # backward compat: old 7-column files (no Gerr)
+    return data[:, 4], data[:, 5], np.zeros(len(data)), data[:, 6], header
 
 
-def radial_average(qmag, G, nbins):
-    """Rotationally average G over log-spaced |q| shells."""
+def radial_average(qmag, G, nbins, Gerr=None):
+    """Rotationally average G over log-spaced |q| shells.
+
+    Returns (qr, Gr, Ginv_r, cnt, Ginv_err). Ginv_err is the propagated
+    statistical error of 1/<G> in each shell: if per-mode errors Gerr (from the
+    replica spread) are given, the shell error of the mean is
+    sqrt(sum Gerr_i^2)/n, else it falls back to the in-shell std / sqrt(n).
+    """
     mask = (qmag > 0) & (G > 0) & np.isfinite(G)
     q, g = qmag[mask], G[mask]
+    ge = (Gerr[mask] if Gerr is not None else np.zeros_like(g))
     edges = np.logspace(np.log10(q.min()), np.log10(q.max()), nbins + 1)
     idx = np.digitize(q, edges)
-    qr, gr, cnt = [], [], []
+    qr, gr, cnt, gerr = [], [], [], []
     for b in range(1, nbins + 1):
         sel = idx == b
-        if sel.sum() >= 1:
-            qr.append(q[sel].mean()); gr.append(g[sel].mean()); cnt.append(int(sel.sum()))
-    qr, gr, cnt = map(np.array, (qr, gr, cnt))
-    return qr, gr, 1.0 / gr, cnt
+        n = int(sel.sum())
+        if n < 1:
+            continue
+        gm = g[sel].mean()
+        # statistical error of the shell mean
+        if Gerr is not None and np.any(ge[sel] > 0):
+            em = np.sqrt(np.sum(ge[sel] ** 2)) / n
+        else:
+            em = (g[sel].std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
+        qr.append(q[sel].mean()); gr.append(gm); cnt.append(n); gerr.append(em)
+    qr, gr, cnt, gerr = map(np.array, (qr, gr, cnt, gerr))
+    Ginv_r = 1.0 / gr
+    Ginv_err = gerr / gr ** 2          # error of 1/<G>
+    return qr, gr, Ginv_r, cnt, Ginv_err
 
 
 def effective_exponent(qr, Ginv_r):
@@ -114,13 +135,21 @@ def plateau_eta(qr, Ginv_r, cnt, qlo, qhi):
     return eta, spread, int(m.sum())
 
 
-def fit_eta_window(qr, Ginv_r, cnt, qmin, qmax):
-    """Straight log-log fit over [qmin, qmax] (shells weighted by sqrt count)."""
+def fit_eta_window(qr, Ginv_r, cnt, qmin, qmax, Ginv_err=None):
+    """Straight log-log fit over [qmin, qmax]. If per-shell statistical errors
+    Ginv_err are given, weight by inverse variance in log space so the returned
+    slope error is a genuine propagated statistical error; else weight by
+    sqrt(shell count)."""
     m = (qr >= qmin) & (qr <= qmax) & (Ginv_r > 0) & np.isfinite(Ginv_r)
     if m.sum() < 3:
         return None, None, int(m.sum())
-    coef, cov = np.polyfit(np.log(qr[m]), np.log(Ginv_r[m]),
-                           1, w=np.sqrt(cnt[m]), cov=True)
+    x, y = np.log(qr[m]), np.log(Ginv_r[m])
+    if Ginv_err is not None and np.all(Ginv_err[m] > 0):
+        sigma = Ginv_err[m] / Ginv_r[m]          # error of log(Ginv)
+        w = 1.0 / sigma
+    else:
+        w = np.sqrt(cnt[m])
+    coef, cov = np.polyfit(x, y, 1, w=w, cov=True)
     return 4.0 - coef[0], float(np.sqrt(cov[0, 0])), int(m.sum())
 
 
@@ -179,7 +208,7 @@ def fit_eta_crossover(qr, Ginv_r, cnt, qlo, qhi, eta0=0.75, q8_0=None):
 
 # ----------------------------------------------------------------------------
 def plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax,
-         out_png, out_gp, datfile):
+         out_png, out_gp, datfile, Ginv_err=None):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -201,8 +230,13 @@ plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
     # left: inverse Green
     axL.loglog(qmag, Ginv, ".", ms=2, alpha=0.18, color="0.7",
                label="all modes (q_x, q_y)")
-    axL.scatter(qr, Ginv_r, s=12 + 40 * cnt / cnt.max(), color="C0",
-                zorder=3, label=r"radial avg $G^{-1}(q_r)$")
+    if Ginv_err is not None and np.any(Ginv_err > 0):
+        axL.errorbar(qr, Ginv_r, yerr=Ginv_err, fmt="o", ms=4, color="C0",
+                     ecolor="C0", elinewidth=0.8, capsize=2, zorder=3,
+                     label=r"radial avg $G^{-1}(q_r)\pm$SE")
+    else:
+        axL.scatter(qr, Ginv_r, s=12 + 40 * cnt / cnt.max(), color="C0",
+                    zorder=3, label=r"radial avg $G^{-1}(q_r)$")
     qq = np.logspace(np.log10(qmag[qmag > 0].min()), np.log10(qmag.max()), 200)
     axL.loglog(qq, qq**4, "--", color="C3", lw=1.3, label=r"$q^4$ (harmonic)")
     if cross:
@@ -240,7 +274,7 @@ plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
 # ----------------------------------------------------------------------------
 def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
                  png=None, quiet=False):
-    qmag, G, Ginv, header = load(datfile)
+    qmag, G, Gerr, Ginv, header = load(datfile)
     p8 = float(header.get("p8", 0.3))
     a = 2 * np.pi / float(header.get("L", 81))
 
@@ -250,9 +284,9 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
     qmin = qmin_arg if qmin_arg is not None else 3 * a
     qmax = qmax_arg if qmax_arg is not None else p8
 
-    qr, Gr, Ginv_r, cnt = radial_average(qmag, G, nbins)
+    qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins, Gerr)
     eta_p, spread_p, nsh_p = plateau_eta(qr, Ginv_r, cnt, qmin, qmax)
-    eta_w, err_w, nsh = fit_eta_window(qr, Ginv_r, cnt, qmin, qmax)
+    eta_w, err_w, nsh = fit_eta_window(qr, Ginv_r, cnt, qmin, qmax, Ginv_err)
     cross = fit_eta_crossover(qr, Ginv_r, cnt, 2 * a, quv,
                               eta0=eta_w if eta_w else 0.75, q8_0=p8)
 
@@ -265,11 +299,14 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
             flat = "flat" if spread_p < 0.25 else "NOT flat -> eta ill-defined here"
             print(f"plateau eta    : {eta_p:.3f}  (eta_eff spread {spread_p:.3f}, {flat})  [PRIMARY]")
         if eta_w is not None:
-            print(f"windowed slope : {eta_w:.3f} +/- {err_w:.3f}")
+            print(f"windowed slope : {eta_w:.3f} +/- {err_w:.3f}  (stat. error)")
         if cross:
             print(f"crossover fit  : {cross['eta']:.3f} +/- {cross['eta_err']:.3f}"
                   f"   q8={cross['q8']:.3f}   [heuristic ansatz, cross-check only]")
-        print(f"Poisson ratio  : {header.get('nu','?')}  (from simulation)")
+        print(f"Poisson ratio  : {header.get('nu','?')} +/- {header.get('nu_err','?')}")
+        conv = header.get("converged", "?")
+        print(f"run            : sweeps={header.get('sweeps','?')} "
+              f"Delta2 rel.err={header.get('rel_err','?')} converged={conv}")
 
     # mirror the data subpath: data/N40/p0.40/data.dat -> plots/N40/p0.40/
     d = os.path.dirname(datfile)
@@ -277,7 +314,8 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
     os.makedirs(pdir, exist_ok=True)
     png = png or os.path.join(pdir, "fit.png")
     gp = os.path.join(pdir, "fit.gp")
-    plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, datfile)
+    plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, datfile,
+         Ginv_err=Ginv_err)
     return dict(N=int(header.get("N", 0)), p8=p8, png=png,
                 eta_plateau=eta_p, eta_plateau_spread=spread_p,
                 eta_window=eta_w, eta_window_err=err_w,

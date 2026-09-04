@@ -59,7 +59,10 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   p8=<float>     interaction strength, 0 < p8 < pi  (default 0.4)
   nt=<int>       independent replicas / threads     (default 12)
   therm=<int>    thermalization sweeps per replica  (default 80)
-  sweeps=<int>   measurement sweeps per replica     (default 80)
+  sweeps=<int>   MAX measurement sweeps (cap)       (default 2000)
+  eps=<float>    target rel. stat. error on Delta2  (default 0.01; 0=off)
+  minsweeps=<int> min sweeps before stopping        (default 40)
+  block=<int>    sweeps between convergence checks   (default 20)
   meas=<int>     measure every M sweeps             (default 1)
   d0=<float>     base Metropolis step size          (default 2.6)
   seed=<int>     base RNG seed (reproducible)       (default 12345)
@@ -68,9 +71,24 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   -h             help
 ```
 
-One **sweep** = `l·l` attempted single-mode updates. Total statistics =
-`nt × sweeps` measurements. Each replica is an independent Markov chain seeded
-by `(seed, replica_index)`, so runs are fully reproducible.
+One **sweep** = `l·l` attempted single-mode updates. Each replica is an
+independent Markov chain seeded by `(seed, replica_index)`, so runs are fully
+reproducible.
+
+### Convergence and error bars
+
+The measurement phase runs in **blocks** and stops when the run has genuinely
+converged, not after a fixed count. After each `block` sweeps it estimates the
+**relative statistical error of `Δ² = Σ_q⟨|h_q|²⟩`** from the spread across the
+independent replicas, and stops once that error drops below `eps` (default 1 %),
+bounded by `minsweeps … sweeps`. Set `eps=0` to force a fixed `sweeps` run.
+
+Because the replicas are independent, every observable gets a real statistical
+error: `G(q)` is reported with its **standard error across replicas** (`Gerr`
+column), the Poisson ratio as `ν ± SE`, and `analyze.py`'s windowed-slope η
+error is the **inverse-variance-weighted** propagation of those `G` errors
+(not just fit scatter). The run's achieved `Δ²` error and a `converged` flag
+are written into the `.dat` header.
 
 ### Reaching the anomalous regime on a small lattice
 
@@ -157,13 +175,14 @@ p8-dominated, N-flat picture.
 `data/N=<N>.dat` is a text table (one row per non-zero mode):
 
 ```
-# Fourier MC membrane   N=36 L=73 p8=0.4000 samples=1280 nu=0.036500
-# q1 q2 qx qy qmag G Ginv
-q1  q2  qx  qy  |q|  G(q)=<|h_q|^2>  1/G(q)
+# Fourier MC membrane   N=36 L=73 p8=0.4000 samples=1280 sweeps=120 nu=0.036 nu_err=0.02 rel_err=0.009 converged=1
+# q1 q2 qx qy qmag G Gerr Ginv
+q1  q2  qx  qy  |q|  G(q)=<|h_q|^2>  SE(G)  1/G(q)
 ```
 
-The header carries `N, L, p8, samples, nu`; `tools/analyze.py` parses it
-automatically.
+The header carries `N, L, p8, samples, sweeps, nu, nu_err, rel_err, converged`;
+`tools/analyze.py` parses it automatically (and still reads older 7-column
+files without `Gerr`).
 
 ---
 

@@ -33,11 +33,14 @@ static Config default_config(void) {
     int mx = omp_get_max_threads();
     c.nthreads = mx < 12 ? mx : 12;
     c.therm = 80;
-    c.sweeps = 80;
+    c.sweeps = 2000;     /* max measurement sweeps (cap for adaptive run)   */
     c.meas_every = 1;
     c.d0 = 2.6;
     c.seed = 12345u;
     c.verbose = 0;
+    c.eps = 0.01;        /* target rel. stat. error on Delta2 (0 disables)  */
+    c.min_sweeps = 40;   /* don't stop before this many measurement sweeps   */
+    c.block = 20;        /* sweeps between convergence checks                */
     return c;
 }
 
@@ -50,7 +53,10 @@ static void usage(const Config *d) {
     printf("  n=<int>           half move-zone size, l=2n+1      (=N)\n");
     printf("  p8=<float>        interaction strength, 0<p8<pi    (%.2f)\n", d->p8);
     printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
-    printf("  sweeps=<int>      measurement sweeps per replica   (%ld)\n", d->sweeps);
+    printf("  sweeps=<int>      MAX measurement sweeps (cap)     (%ld)\n", d->sweeps);
+    printf("  eps=<float>       target rel. error on Delta2; 0=off (%.3f)\n", d->eps);
+    printf("  minsweeps=<int>   min sweeps before stopping       (%ld)\n", d->min_sweeps);
+    printf("  block=<int>       sweeps between convergence checks(%d)\n", d->block);
     printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
@@ -73,6 +79,9 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "nt=%d", &cfg.nthreads) == 1) continue;
         if (sscanf(argv[i], "therm=%ld", &cfg.therm) == 1) continue;
         if (sscanf(argv[i], "sweeps=%ld", &cfg.sweeps) == 1) continue;
+        if (sscanf(argv[i], "eps=%lf", &cfg.eps) == 1) continue;
+        if (sscanf(argv[i], "minsweeps=%ld", &cfg.min_sweeps) == 1) continue;
+        if (sscanf(argv[i], "block=%d", &cfg.block) == 1) continue;
         if (sscanf(argv[i], "meas=%d", &cfg.meas_every) == 1) continue;
         if (sscanf(argv[i], "d0=%lf", &cfg.d0) == 1) continue;
         if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
@@ -90,38 +99,65 @@ int main(int argc, char *argv[]) {
 
     printf("brane: N=%d L=%d n=%d p8=%.3f  replicas=%d\n",
            cfg.N, L, cfg.n, cfg.p8, cfg.nthreads);
-    printf("       therm=%ld sweeps=%ld meas_every=%d N8=%d\n",
-           cfg.therm, cfg.sweeps, cfg.meas_every, geo.N8);
+    printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
+           cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
 
     Replica *reps = calloc((size_t)cfg.nthreads, sizeof(Replica));
     double t0 = omp_get_wtime();
 
+    /* Thermalize all replicas (parallel), then measure in blocks. */
     #pragma omp parallel num_threads(cfg.nthreads)
     {
         int r = omp_get_thread_num();
         Replica *rep = &reps[r];
         replica_alloc(rep, &geo);
         replica_init(rep, &geo, cfg.seed, (uint64_t)(r + 1));
-
         for (long s = 0; s < cfg.therm; s++)
             replica_sweep(rep, &geo, &cfg);
-        for (long s = 0; s < cfg.sweeps; s++) {
-            replica_sweep(rep, &geo, &cfg);
-            if ((s % cfg.meas_every) == 0) replica_measure(rep, &geo);
+    }
+
+    /* Adaptive measurement: keep running blocks of sweeps until the relative
+     * statistical error of Delta2 (estimated from the spread across the
+     * independent replicas) drops below cfg.eps, bounded by [min_sweeps,
+     * sweeps]. eps <= 0 disables the check (fixed cfg.sweeps sweeps). */
+    long done = 0;
+    double rel = -1.0;
+    int converged = 0;
+    int block = cfg.block > 0 ? cfg.block : 20;
+    while (done < cfg.sweeps) {
+        long todo = block;
+        if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
+        #pragma omp parallel for num_threads(cfg.nthreads) schedule(static, 1)
+        for (int r = 0; r < cfg.nthreads; r++) {
+            Replica *rep = &reps[r];
+            for (long s = 0; s < todo; s++) {
+                replica_sweep(rep, &geo, &cfg);
+                if ((s % cfg.meas_every) == 0) replica_measure(rep, &geo);
+            }
         }
+        done += todo;
+        rel = delta2_rel_error(reps, cfg.nthreads, &geo);
         if (cfg.verbose)
-            #pragma omp critical
-            printf("  replica %2d: acc=%.1f%% meas=%ld\n",
-                   r, 100.0 * rep->accepted / (rep->proposed ? rep->proposed : 1),
-                   rep->nmeas);
+            printf("  sweeps=%ld  Delta2 rel.err=%.4f  (target %.4f)\n",
+                   done, rel, cfg.eps);
+        if (cfg.eps > 0 && done >= cfg.min_sweeps && rel >= 0 && rel < cfg.eps) {
+            converged = 1;
+            break;
+        }
     }
 
     double elapsed = omp_get_wtime() - t0;
     Result res = result_reduce(reps, cfg.nthreads, &geo);
+    res.sweeps_done = done;
+    res.rel_err = rel;
+    res.converged = converged;
 
-    printf("\ntime = %.2f s   accept = %.1f%%   samples = %ld\n",
-           elapsed, 100.0 * res.accept_rate, res.total_meas);
-    printf("Poisson ratio nu = %.4f\n", res.poisson);
+    printf("\ntime = %.2f s   accept = %.1f%%   samples = %ld   sweeps/replica = %ld\n",
+           elapsed, 100.0 * res.accept_rate, res.total_meas, done);
+    printf("Delta2 rel.err = %.4f  %s(target %.4f)\n", res.rel_err,
+           converged ? "converged " : (cfg.eps > 0 ? "NOT converged " : "fixed-length "),
+           cfg.eps);
+    printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
 
     /* ---- write Green function G(q) and inverse Green G^{-1}(q) --------- */
     if (!outpath[0])
@@ -140,9 +176,11 @@ int main(int argc, char *argv[]) {
     }
     FILE *f = fopen(outpath, "w");
     if (!f) { fprintf(stderr, "cannot write %s\n", outpath); return 1; }
-    fprintf(f, "# Fourier MC membrane   N=%d L=%d p8=%.4f samples=%ld nu=%.6f\n",
-            cfg.N, L, cfg.p8, res.total_meas, res.poisson);
-    fprintf(f, "# q1 q2 qx qy qmag G Ginv\n");
+    fprintf(f, "# Fourier MC membrane   N=%d L=%d p8=%.4f samples=%ld sweeps=%ld "
+               "nu=%.6f nu_err=%.6f rel_err=%.6f converged=%d\n",
+            cfg.N, L, cfg.p8, res.total_meas, done,
+            res.poisson, res.poisson_err, res.rel_err, converged);
+    fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
     for (int q1 = -cfg.N; q1 <= cfg.N; q1++)
         for (int q2 = -cfg.N; q2 <= cfg.N; q2++) {
             if (q1 == 0 && q2 == 0) continue;
@@ -150,8 +188,9 @@ int main(int argc, char *argv[]) {
             double qx = geo.a * q1, qy = geo.a * q2;
             double qm = sqrt(qx * qx + qy * qy);
             double G = res.G[i1 * L + i2];
-            fprintf(f, "%d\t%d\t%.8f\t%.8f\t%.8f\t%.10e\t%.10e\n",
-                    q1, q2, qx, qy, qm, G, G > 0 ? 1.0 / G : 0.0);
+            double Ge = res.Gerr[i1 * L + i2];
+            fprintf(f, "%d\t%d\t%.8f\t%.8f\t%.8f\t%.10e\t%.10e\t%.10e\n",
+                    q1, q2, qx, qy, qm, G, Ge, G > 0 ? 1.0 / G : 0.0);
         }
     fclose(f);
     printf("wrote %s\n", outpath);

@@ -218,37 +218,97 @@ void replica_measure(Replica *rep, const Geometry *geo) {
 }
 
 /* ---- reduction across replicas --------------------------------------- */
-Result result_reduce(const Replica *reps, int nreps, const Geometry *geo) {
+/* Per-replica estimate of the Poisson ratio (guarded). */
+static double replica_poisson(const Replica *rep) {
+    if (rep->nmeas <= 0) return 0.0;
+    double m = (double)rep->nmeas;
+    double mKx = rep->sum_Kx / m, mKy = rep->sum_Ky / m;
+    double cov = rep->sum_KxKy / m - mKx * mKy;
+    double var = rep->sum_KxKx / m - mKx * mKx;
+    return (var != 0.0) ? -cov / var : 0.0;
+}
+
+double delta2_rel_error(const Replica *reps, int nreps, const Geometry *geo) {
     int L = geo->L;
+    int used = 0;
+    double d2[4096];  /* nreps is small (<= cores); guard just in case */
+    if (nreps > 4096) nreps = 4096;
+    for (int r = 0; r < nreps; r++) {
+        if (reps[r].nmeas <= 0) continue;
+        double s = 0.0;
+        for (int i = 0; i < L * L; i++) s += reps[r].g[i];
+        d2[used++] = s / (double)reps[r].nmeas;  /* Delta2 for replica r */
+    }
+    if (used < 2) return -1.0;
+    double mean = 0.0;
+    for (int r = 0; r < used; r++) mean += d2[r];
+    mean /= used;
+    double var = 0.0;
+    for (int r = 0; r < used; r++) var += (d2[r] - mean) * (d2[r] - mean);
+    var /= (used - 1);                       /* sample variance          */
+    double sem = sqrt(var / used);           /* std error of the mean    */
+    return (mean != 0.0) ? sem / fabs(mean) : -1.0;
+}
+
+Result result_reduce(const Replica *reps, int nreps, const Geometry *geo) {
+    int L = geo->L, LL = L * L;
     Result res;
     res.N = geo->N; res.L = L; res.N8 = geo->N8;
     res.a = geo->a; res.p8 = sqrt(geo->Y * 3.0 / (2.0 * M_PI));
-    res.G = calloc((size_t)L * L, sizeof(double));
+    res.G = calloc((size_t)LL, sizeof(double));
+    res.Gerr = calloc((size_t)LL, sizeof(double));
+    res.sweeps_done = 0; res.rel_err = -1.0; res.converged = 0;
 
+    /* Per-mode mean and standard error of G across independent replicas.  */
     long total_meas = 0, proposed = 0, accepted = 0;
-    double sKx = 0, sKy = 0, sKxKx = 0, sKxKy = 0;
+    int nr = 0;  /* replicas that actually measured */
     for (int r = 0; r < nreps; r++) {
-        for (int i = 0; i < L * L; i++) res.G[i] += reps[r].g[i];
         total_meas += reps[r].nmeas;
-        proposed  += reps[r].proposed;
-        accepted  += reps[r].accepted;
-        sKx += reps[r].sum_Kx; sKy += reps[r].sum_Ky;
-        sKxKx += reps[r].sum_KxKx; sKxKy += reps[r].sum_KxKy;
+        proposed   += reps[r].proposed;
+        accepted   += reps[r].accepted;
+        if (reps[r].nmeas > 0) nr++;
     }
-    if (total_meas > 0)
-        for (int i = 0; i < L * L; i++) res.G[i] /= total_meas;
+    /* mean over replicas of per-replica G_r(q) = g_r/nmeas_r */
+    for (int r = 0; r < nreps; r++) {
+        if (reps[r].nmeas <= 0) continue;
+        double inv = 1.0 / (double)reps[r].nmeas;
+        for (int i = 0; i < LL; i++) res.G[i] += reps[r].g[i] * inv;
+    }
+    if (nr > 0) for (int i = 0; i < LL; i++) res.G[i] /= nr;
+    /* standard error of the mean across replicas */
+    if (nr > 1) {
+        for (int r = 0; r < nreps; r++) {
+            if (reps[r].nmeas <= 0) continue;
+            double inv = 1.0 / (double)reps[r].nmeas;
+            for (int i = 0; i < LL; i++) {
+                double d = reps[r].g[i] * inv - res.G[i];
+                res.Gerr[i] += d * d;
+            }
+        }
+        for (int i = 0; i < LL; i++)
+            res.Gerr[i] = sqrt(res.Gerr[i] / (nr - 1) / nr);  /* SEM */
+    }
     res.total_meas = total_meas;
     res.accept_rate = proposed ? (double)accepted / proposed : 0.0;
 
-    /* nu = -(<Kx Ky> - <Kx><Ky>) / (<Kx Kx> - <Kx>^2) */
-    res.poisson = 0.0;
-    if (geo->N8 > 0 && total_meas > 0) {
-        double mKx = sKx / total_meas, mKy = sKy / total_meas;
-        double cov = sKxKy / total_meas - mKx * mKy;
-        double var = sKxKx / total_meas - mKx * mKx;
-        if (var != 0.0) res.poisson = -cov / var;
+    /* Poisson ratio: mean +/- SEM of the per-replica estimates. */
+    res.poisson = 0.0; res.poisson_err = 0.0;
+    if (geo->N8 > 0 && nr > 0) {
+        double nu[4096]; int m = (nr < 4096) ? nr : 4096, k = 0;
+        (void)m;
+        for (int r = 0; r < nreps && k < 4096; r++)
+            if (reps[r].nmeas > 0) nu[k++] = replica_poisson(&reps[r]);
+        double mean = 0.0; for (int r = 0; r < k; r++) mean += nu[r]; mean /= k;
+        res.poisson = mean;
+        if (k > 1) {
+            double var = 0.0;
+            for (int r = 0; r < k; r++) var += (nu[r] - mean) * (nu[r] - mean);
+            res.poisson_err = sqrt(var / (k - 1) / k);
+        }
     }
     return res;
 }
 
-void result_free(Result *res) { free(res->G); res->G = NULL; }
+void result_free(Result *res) {
+    free(res->G); free(res->Gerr); res->G = res->Gerr = NULL;
+}

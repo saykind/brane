@@ -41,12 +41,12 @@ def run_sim(N, p8, nt, therm, sweeps, seed=12345):
 
 
 def measure(datfile):
-    qmag, G, Ginv, header = analyze.load(datfile)
+    qmag, G, Gerr, Ginv, header = analyze.load(datfile)
     L = float(header["L"]); a = 2 * np.pi / L
     p8 = float(header["p8"])
-    qr, Gr, Ginv_r, cnt = analyze.radial_average(qmag, G, 60)
-    qmin, qmax = 3 * a, max(p8, 5 * a)
-    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, qmin, qmax)
+    qr, Gr, Ginv_r, cnt, Ginv_err = analyze.radial_average(qmag, G, 60, Gerr)
+    qmin, qmax = 3 * a, p8
+    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, qmin, qmax, Ginv_err)
     _, spread, _ = analyze.plateau_eta(qr, Ginv_r, cnt, qmin, qmax)
     nu = float(header.get("nu", "nan"))
     return eta, err, spread, nu

@@ -36,6 +36,10 @@ typedef struct {
     double   d0;         /* base Metropolis step size                      */
     uint64_t seed;       /* base RNG seed (reproducibility)                */
     int      verbose;    /* progress reporting                             */
+    /* ---- convergence control (adaptive stopping) --------------------- */
+    double   eps;        /* target relative stat. error on Delta2; <=0 off */
+    long     min_sweeps; /* minimum measurement sweeps before stopping     */
+    int      block;      /* measurement sweeps between convergence checks   */
 } Config;
 
 /* Derived, read-only geometry shared by all replicas. */
@@ -87,10 +91,21 @@ typedef struct {
     int     N, L, N8;
     double  a, p8;
     long    total_meas;
-    double *G;           /* [L*L] Green function <|h_q|^2>                 */
-    double  poisson;     /* Poisson ratio nu                              */
+    double *G;           /* [L*L] Green function <|h_q|^2> (mean over reps) */
+    double *Gerr;        /* [L*L] standard error of the mean across replicas*/
+    double  poisson;     /* Poisson ratio nu (mean over replicas)          */
+    double  poisson_err; /* standard error of nu across replicas           */
     double  accept_rate;
+    long    sweeps_done; /* measurement sweeps actually run (per replica)   */
+    double  rel_err;     /* achieved relative stat. error on Delta2         */
+    int     converged;   /* 1 if the eps target was reached                 */
 } Result;
+
+/* Relative statistical error of the mean-square amplitude Delta2 =
+ * sum_q <|h_q|^2>, estimated from the spread across independent replicas.
+ * This is the quantity the adaptive driver converges. Returns <0 if not
+ * yet measurable (need >= 2 replicas with measurements). */
+double   delta2_rel_error(const Replica *reps, int nreps, const Geometry *geo);
 
 Result   result_reduce(const Replica *reps, int nreps, const Geometry *geo);
 void     result_free(Result *res);

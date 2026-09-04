@@ -36,7 +36,8 @@ def load_grid(path):
                  "(regenerate with ./brane ... out=...).")
     d = np.loadtxt(path, comments="#")
     q1 = d[:, 0].astype(int); q2 = d[:, 1].astype(int)
-    qx = d[:, 2]; qy = d[:, 3]; G = d[:, 5]; Ginv = d[:, 6]
+    qx = d[:, 2]; qy = d[:, 3]; G = d[:, 5]
+    Ginv = d[:, 7] if d.shape[1] >= 8 else d[:, 6]  # Gerr inserted at col 6
     N = int(header.get("N", (q1.max())))
     L = 2 * N + 1
     a = 2 * np.pi / L

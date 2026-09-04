@@ -30,11 +30,11 @@ import analyze  # same directory
 
 def measure_file(path):
     """Return (N, p8, eta) measured from a single brane output file."""
-    qmag, G, Ginv, header = analyze.load(path)
+    qmag, G, Gerr, Ginv, header = analyze.load(path)
     N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
     p8 = float(header["p8"])
-    qr, Gr, Ginv_r, cnt = analyze.radial_average(qmag, G, 60)
-    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, 3 * a, p8)
+    qr, Gr, Ginv_r, cnt, Ginv_err = analyze.radial_average(qmag, G, 60, Gerr)
+    eta, err, _ = analyze.fit_eta_window(qr, Ginv_r, cnt, 3 * a, p8, Ginv_err)
     return N, p8, eta
 
 
