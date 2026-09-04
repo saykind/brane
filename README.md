@@ -85,10 +85,13 @@ above finite-size effects,
 ```
 
 On a small lattice this window is narrow and sits in the crossover, so the fit
-returns a *biased effective exponent that undershoots* the true η. Widen the
-window — with larger `L` (lowers the floor `a`) or larger `p8` (raises the
-ceiling `q8`) — to expose more of the asymptotic regime. Neither changes η;
-they only make it measurable:
+returns a *biased effective exponent that undershoots* the true η. In principle
+you widen the window with larger `L` (lowers the floor `a`) or larger `p8`
+(raises the ceiling `q8`). **Empirically (see the sweeps below), only `p8`
+moves the measured η at reachable sizes** — over N=20–52 the N-dependence is
+below the noise, because the fit is dominated by the shells near the crossover,
+which don't change with `L`. So on a sub-minute lattice, `p8` is the effective
+knob; extracting the true universal η needs the thesis's large-`N` scaling.
 
 ```bash
 ./brane N=36 p8=0.8 therm=80 sweeps=80   # wider window → η ≈ 0.74 in ~50 s
@@ -127,11 +130,19 @@ uv run tools/heatmap.py            # 2D colormap eta(N, p8), data/heatmap.{png,c
 ```
 
 Produces `η` vs `N` (fixed `p8`), `η` vs `p8` (fixed `N`), and a 2D `η(N,p8)`
-colormap. The trends are *measurement/window* effects — the effective η rises
-toward the universal `0.78` as the accessible window widens (larger `L`, or
-larger `p8` moving the crossover up); the true exponent is unchanged. The
-colormap's contour orientation shows which knob dominates at a given size:
-near-vertical contours mean p8/window-limited, horizontal means finite-size.
+colormap combining all runs.
+
+**What the sweeps show (measured, not assumed):** across N=20–52 and p8=0.3–1.0,
+the *only* statistically significant dependence is on **p8** — the measured
+effective η rises monotonically with p8 (column means ≈ 0.49→0.82) and does not
+saturate. The N-dependence at fixed p8 is **below the noise** (per-column
+`dη/dN` slopes are consistent with zero). So at these accessible sizes the
+measurement is set by where the fit window sits relative to the crossover
+`q8~p8`, and growing N alone does *not* move η. These are therefore *effective /
+crossover* exponents — this data does **not** by itself pin the universal
+η≈0.78, which requires the large-N finite-size scaling of the thesis
+(`N~180`). The colormap's contours run near-vertical, confirming the
+p8-dominated, N-flat picture.
 
 ### Multi-size sweep (finite-size study, thesis-style)
 
