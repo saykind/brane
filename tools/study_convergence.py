@@ -25,13 +25,26 @@ LINE = re.compile(r"sweeps=(\d+)\s+Delta2=([-\d.eE+]+)\s+Delta2 rel\.err=([-\d.e
 
 
 def parse(path):
+    """Read (sweeps, Delta2, rel_err) from either a <out>.dat.trace file
+    (tab columns: sweeps Delta2 rel_err wall_s) or a verbose stdout log."""
     sw, d2, re_ = [], [], []
     for line in open(path):
+        if line.startswith("#") or not line.strip():
+            continue
         m = LINE.search(line)
-        if m:
+        if m:                                   # verbose stdout log format
             sw.append(int(m.group(1)))
             d2.append(float(m.group(2)))
             re_.append(float(m.group(3)))
+            continue
+        parts = line.split()                    # trace-file columns
+        if len(parts) >= 3:
+            try:
+                sw.append(int(float(parts[0])))
+                d2.append(float(parts[1]))
+                re_.append(float(parts[2]))
+            except ValueError:
+                pass
     return np.array(sw), np.array(d2), np.array(re_)
 
 

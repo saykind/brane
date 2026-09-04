@@ -269,8 +269,9 @@ def fit_eta_crossover(qr, Ginv_r, cnt, qlo, qhi, eta0=0.75, q8_0=None):
 # ever pool cells with the SAME p8 (mixing couplings mixes crossover scales).
 def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
                    tol=1e-3):
-    """Pool radial-averaged (q_r, G^-1, err, N) points from every cell whose p8
-    matches p8_target, each restricted to its own window [3 a_N, p8]."""
+    """Pool EVERY mode (q_r, G^-1, err, N) -- no angular averaging -- from every
+    cell whose p8 matches p8_target, each restricted to its own window
+    [3 a_N, p8]. (nbins kept for signature compatibility; unused.)"""
     import glob
     q, gi, ge, Ns = [], [], [], []
     for f in sorted(glob.glob(pattern)):
@@ -279,10 +280,10 @@ def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
         if abs(p8 - p8_target) > tol:
             continue
         N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
-        qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins, Gerr)
-        m = (qr >= 3 * a) & (qr <= p8) & (Ginv_r > 0) & np.isfinite(Ginv_r)
-        q.extend(qr[m]); gi.extend(Ginv_r[m])
-        ge.extend(Ginv_err[m]); Ns.extend([N] * int(m.sum()))
+        m = (qmag >= 3 * a) & (qmag <= p8) & (G > 0) & np.isfinite(G)
+        q.extend(qmag[m]); gi.extend(1.0 / G[m])
+        ge.extend(np.where(Gerr[m] > 0, Gerr[m] / G[m] ** 2, 0.0))
+        Ns.extend([N] * int(m.sum()))
     return (np.array(q), np.array(gi), np.array(ge), np.array(Ns, int))
 
 
@@ -325,9 +326,9 @@ def plot_combined(q, gi, ge, Ns, eta, err, png, wlo, whi, coupling=None):
     for i, n in enumerate(uN):
         s = Ns == n
         c = cmap(i / max(1, len(uN) - 1))
-        ax.errorbar(q[s], gi[s], yerr=ge[s], fmt="o", ms=3.0, color=c,
-                    ecolor=c, elinewidth=0.6, capsize=1.2, alpha=0.85,
-                    label=f"N={n}")
+        # every mode is a point (no angular averaging); dense -> small+alpha
+        ax.scatter(q[s], gi[s], s=4, alpha=0.35, color=c, linewidths=0,
+                   rasterized=True, label=f"N={n}")
     qq = np.logspace(np.log10(q.min()), np.log10(q.max()), 300)
     # anchor reference lines at the geometric mean of the IN-WINDOW points
     inpts = (q >= wlo) & (q <= whi)

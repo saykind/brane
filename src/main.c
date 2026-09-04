@@ -215,6 +215,20 @@ int main(int argc, char *argv[]) {
     int block = cfg.block > 0 ? cfg.block : 20;
     double last_ckpt = omp_get_wtime();
     const double CKPT_INTERVAL = 60.0;  /* seconds between checkpoints */
+
+    /* Convergence trace: one row per block written to a sibling <out>.trace
+     * file (flushed each block), so the sweeps/Delta2/rel_err trajectory is
+     * captured on disk regardless of stdout buffering. */
+    char tracepath[600];
+    snprintf(tracepath, sizeof tracepath, "%s.trace", outpath);
+    FILE *trace = fopen(tracepath, "w");
+    if (trace) {
+        fprintf(trace, "# convergence trace: N=%d p8=%.4f nt=%d it=%d therm=%ld\n",
+                cfg.N, cfg.p8, cfg.nthreads, cfg.inner, cfg.therm);
+        fprintf(trace, "# sweeps\tDelta2\trel_err\twall_s\n");
+        fflush(trace);
+    }
+
     while (done < cfg.sweeps) {
         long todo = block;
         if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
@@ -228,9 +242,15 @@ int main(int argc, char *argv[]) {
         }
         done += todo;
         rel = delta2_rel_error(reps, cfg.nthreads, &geo);
+        double d2m = delta2_mean(reps, cfg.nthreads, &geo);
+        if (trace) {
+            fprintf(trace, "%ld\t%.8e\t%.6f\t%.2f\n",
+                    done, d2m, rel, omp_get_wtime() - t0);
+            fflush(trace);
+        }
         if (cfg.verbose)
             printf("  sweeps=%ld  Delta2=%.6f  Delta2 rel.err=%.4f  (target %.4f)\n",
-                   done, delta2_mean(reps, cfg.nthreads, &geo), rel, cfg.eps);
+                   done, d2m, rel, cfg.eps);
         if (cfg.eps > 0 && done >= cfg.min_sweeps && rel >= 0 && rel < cfg.eps) {
             converged = 1;
             break;
@@ -248,6 +268,7 @@ int main(int argc, char *argv[]) {
             if (cfg.verbose) printf("  [checkpoint @ %ld sweeps]\n", done);
         }
     }
+    if (trace) fclose(trace);
 
     double elapsed = omp_get_wtime() - t0;
     Result res = result_reduce(reps, cfg.nthreads, &geo);
