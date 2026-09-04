@@ -72,6 +72,37 @@ static void usage(const Config *d) {
     printf("  out=<path>        output .dat file (default data/N<N>/p<p8>/data.dat)\n");
 }
 
+/* Write G(q)/G^{-1}(q) to outpath atomically (temp file + rename), so a run
+ * that is killed mid-write -- e.g. by a Simcloud job timeout -- never leaves a
+ * truncated file, and the previous checkpoint survives. Called both per-block
+ * (checkpointing) and at the end. */
+static void write_result_file(const char *outpath, const Config *cfg,
+                              const Geometry *geo, const Result *res,
+                              int L, long done, int converged) {
+    char tmp[600];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", outpath);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { fprintf(stderr, "cannot write %s\n", tmp); return; }
+    fprintf(f, "# Fourier MC membrane   N=%d L=%d p8=%.4f samples=%ld sweeps=%ld "
+               "nu=%.6f nu_err=%.6f rel_err=%.6f converged=%d\n",
+            cfg->N, L, cfg->p8, res->total_meas, done,
+            res->poisson, res->poisson_err, res->rel_err, converged);
+    fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
+    for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
+        for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {
+            if (q1 == 0 && q2 == 0) continue;
+            int i1 = geo->wrap[q1 + L], i2 = geo->wrap[q2 + L];
+            double qx = geo->a * q1, qy = geo->a * q2;
+            double qm = sqrt(qx * qx + qy * qy);
+            double G = res->G[i1 * L + i2];
+            double Ge = res->Gerr[i1 * L + i2];
+            fprintf(f, "%d\t%d\t%.8f\t%.8f\t%.8f\t%.10e\t%.10e\t%.10e\n",
+                    q1, q2, qx, qy, qm, G, Ge, G > 0 ? 1.0 / G : 0.0);
+        }
+    fclose(f);
+    rename(tmp, outpath);
+}
+
 int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
@@ -113,6 +144,22 @@ int main(int argc, char *argv[]) {
     printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
            cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
 
+    /* Resolve the output path and create its directory up front, so per-block
+     * checkpoints during the run can write to it. */
+    if (!outpath[0])
+        snprintf(outpath, sizeof(outpath), "data/N%d/p%.2f/data.dat", cfg.N, cfg.p8);
+    {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "%s", outpath);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = '\0';
+            char cmd[600];
+            snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+            if (system(cmd)) { /* ignore */ }
+        }
+    }
+
     Replica *reps = calloc((size_t)cfg.nthreads, sizeof(Replica));
     double t0 = omp_get_wtime();
 
@@ -135,6 +182,8 @@ int main(int argc, char *argv[]) {
     double rel = -1.0;
     int converged = 0;
     int block = cfg.block > 0 ? cfg.block : 20;
+    double last_ckpt = omp_get_wtime();
+    const double CKPT_INTERVAL = 60.0;  /* seconds between checkpoints */
     while (done < cfg.sweeps) {
         long todo = block;
         if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
@@ -155,6 +204,17 @@ int main(int argc, char *argv[]) {
             converged = 1;
             break;
         }
+        /* Checkpoint: persist current G so a killed run (e.g. job timeout)
+         * still leaves usable data. Time-gated so fast small-N runs don't
+         * thrash I/O. */
+        if (omp_get_wtime() - last_ckpt > CKPT_INTERVAL) {
+            Result cres = result_reduce(reps, cfg.nthreads, &geo);
+            cres.rel_err = rel;
+            write_result_file(outpath, &cfg, &geo, &cres, L, done, converged);
+            result_free(&cres);
+            last_ckpt = omp_get_wtime();
+            if (cfg.verbose) printf("  [checkpoint @ %ld sweeps]\n", done);
+        }
     }
 
     double elapsed = omp_get_wtime() - t0;
@@ -170,40 +230,8 @@ int main(int argc, char *argv[]) {
            cfg.eps);
     printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
 
-    /* ---- write Green function G(q) and inverse Green G^{-1}(q) --------- */
-    if (!outpath[0])
-        snprintf(outpath, sizeof(outpath), "data/N%d/p%.2f/data.dat", cfg.N, cfg.p8);
-    /* create the output directory (everything up to the last '/') */
-    {
-        char dir[512];
-        snprintf(dir, sizeof(dir), "%s", outpath);
-        char *slash = strrchr(dir, '/');
-        if (slash) {
-            *slash = '\0';
-            char cmd[600];
-            snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
-            if (system(cmd)) { /* ignore */ }
-        }
-    }
-    FILE *f = fopen(outpath, "w");
-    if (!f) { fprintf(stderr, "cannot write %s\n", outpath); return 1; }
-    fprintf(f, "# Fourier MC membrane   N=%d L=%d p8=%.4f samples=%ld sweeps=%ld "
-               "nu=%.6f nu_err=%.6f rel_err=%.6f converged=%d\n",
-            cfg.N, L, cfg.p8, res.total_meas, done,
-            res.poisson, res.poisson_err, res.rel_err, converged);
-    fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
-    for (int q1 = -cfg.N; q1 <= cfg.N; q1++)
-        for (int q2 = -cfg.N; q2 <= cfg.N; q2++) {
-            if (q1 == 0 && q2 == 0) continue;
-            int i1 = geo.wrap[q1 + L], i2 = geo.wrap[q2 + L];
-            double qx = geo.a * q1, qy = geo.a * q2;
-            double qm = sqrt(qx * qx + qy * qy);
-            double G = res.G[i1 * L + i2];
-            double Ge = res.Gerr[i1 * L + i2];
-            fprintf(f, "%d\t%d\t%.8f\t%.8f\t%.8f\t%.10e\t%.10e\t%.10e\n",
-                    q1, q2, qx, qy, qm, G, Ge, G > 0 ? 1.0 / G : 0.0);
-        }
-    fclose(f);
+    /* ---- write final Green function G(q) and inverse Green G^{-1}(q) --- */
+    write_result_file(outpath, &cfg, &geo, &res, L, done, converged);
     printf("wrote %s\n", outpath);
 
     for (int r = 0; r < cfg.nthreads; r++) replica_free(&reps[r]);
