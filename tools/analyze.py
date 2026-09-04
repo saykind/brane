@@ -237,37 +237,28 @@ plot '{datfile}' using 5:7 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
 
 
 # ----------------------------------------------------------------------------
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("datfile")
-    ap.add_argument("--qmin", type=float, default=None)
-    ap.add_argument("--qmax", type=float, default=None)
-    ap.add_argument("--nbins", type=int, default=60, help="radial shells")
-    ap.add_argument("--quv", type=float, default=1.0,
-                    help="upper q for crossover fit (avoid lattice UV)")
-    ap.add_argument("--png", default=None)
-    ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
-
-    qmag, G, Ginv, header = load(args.datfile)
+def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
+                 png=None, quiet=False):
+    qmag, G, Ginv, header = load(datfile)
     p8 = float(header.get("p8", 0.3))
     a = 2 * np.pi / float(header.get("L", 81))
 
-    qmin = args.qmin if args.qmin is not None else 3 * a
-    qmax = args.qmax if args.qmax is not None else max(p8, 5 * a)
+    # NOTE: default window stops at the crossover q8~p8 (not above it). The
+    # right-hand eta_eff(q) panel is there so you can judge whether even p8 is
+    # too high a ceiling and tighten --qmax below the crossover.
+    qmin = qmin_arg if qmin_arg is not None else 3 * a
+    qmax = qmax_arg if qmax_arg is not None else p8
 
-    qr, Gr, Ginv_r, cnt = radial_average(qmag, G, args.nbins)
+    qr, Gr, Ginv_r, cnt = radial_average(qmag, G, nbins)
     eta_p, spread_p, nsh_p = plateau_eta(qr, Ginv_r, cnt, qmin, qmax)
     eta_w, err_w, nsh = fit_eta_window(qr, Ginv_r, cnt, qmin, qmax)
-    cross = fit_eta_crossover(qr, Ginv_r, cnt, 2 * a, args.quv,
+    cross = fit_eta_crossover(qr, Ginv_r, cnt, 2 * a, quv,
                               eta0=eta_w if eta_w else 0.75, q8_0=p8)
 
-    if not args.quiet:
-        print(f"file           : {args.datfile}")
+    if not quiet:
+        print(f"file           : {datfile}")
         print(f"N, L           : {header.get('N','?')}, {header.get('L','?')}")
         print(f"p8             : {p8}")
-        print(f"samples        : {header.get('samples','?')}")
-        print(f"radial shells  : {len(qr)} (all {len(qmag)} modes averaged by |q|)")
         print(f"window         : q_r in [{qmin:.3f}, {qmax:.3f}]  ({nsh} shells)")
         if eta_p is not None:
             flat = "flat" if spread_p < 0.25 else "NOT flat -> eta ill-defined here"
@@ -280,18 +271,49 @@ def main():
         print(f"Poisson ratio  : {header.get('nu','?')}  (from simulation)")
 
     os.makedirs("plots", exist_ok=True)
-    base = os.path.splitext(os.path.basename(args.datfile))[0]
-    png = args.png or f"plots/{base}.png"
+    base = os.path.splitext(os.path.basename(datfile))[0]
+    png = png or f"plots/{base}.png"
     gp = f"plots/{base}.gp"
-    plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, args.datfile)
-
-    # expose values for scripting
-    return dict(N=int(header.get("N", 0)), p8=p8,
+    plot(qr, Ginv_r, cnt, qmag, Ginv, eta_w, cross, p8, qmin, qmax, png, gp, datfile)
+    return dict(N=int(header.get("N", 0)), p8=p8, png=png,
                 eta_plateau=eta_p, eta_plateau_spread=spread_p,
                 eta_window=eta_w, eta_window_err=err_w,
-                eta_crossover=cross["eta"] if cross else None,
-                eta_crossover_err=cross["eta_err"] if cross else None,
-                q8=cross["q8"] if cross else None)
+                eta_crossover=cross["eta"] if cross else None)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("datfile", nargs="?", help="a .dat file; omit with --all")
+    ap.add_argument("--qmin", type=float, default=None)
+    ap.add_argument("--qmax", type=float, default=None)
+    ap.add_argument("--nbins", type=int, default=60, help="radial shells")
+    ap.add_argument("--quv", type=float, default=1.0,
+                    help="upper q for crossover fit (avoid lattice UV)")
+    ap.add_argument("--png", default=None)
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--all", metavar="GLOB", nargs="?", const="data/hm_*.dat",
+                    help="batch-analyze every matching file (default data/hm_*.dat)")
+    args = ap.parse_args()
+
+    if args.all:
+        import glob
+        files = sorted(glob.glob(args.all))
+        if not files:
+            sys.exit(f"no files match {args.all}")
+        for i, f in enumerate(files, 1):
+            try:
+                r = analyze_file(f, args.qmin, args.qmax, args.nbins, args.quv,
+                                 quiet=True)
+                print(f"[{i}/{len(files)}] {r['png']}  "
+                      f"p8={r['p8']:.2f} N={r['N']} etaW={r['eta_window']}")
+            except Exception as e:
+                print(f"[{i}/{len(files)}] skip {f}: {e}")
+        return
+
+    if not args.datfile:
+        sys.exit("give a .dat file, or use --all")
+    analyze_file(args.datfile, args.qmin, args.qmax, args.nbins, args.quv,
+                 args.png, args.quiet)
 
 
 if __name__ == "__main__":
