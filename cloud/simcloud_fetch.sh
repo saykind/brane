@@ -25,19 +25,29 @@ simcloud job wait --batch "$BATCH" --summary --poll-interval 30s || true
 
 dl="$repo/cloud/_dl/$BATCH"
 mkdir -p "$dl"
-echo "=== downloading results -> $dl ==="
-# Pull consoles + output bundles for every job in the batch.
-simcloud job list --batch "$BATCH" -f id \
-  | simcloud job download - --to "$dl"
+echo "=== downloading output bundles -> $dl ==="
+# Fetch the per-cell OUTPUT BUNDLES through the bundle service (reliable), NOT
+# `job download` -- the latter also pulls console logs directly from each VM,
+# which needs DC-VPN/direct reachability and times out on Apple Silicon. Output
+# bundles are auto-tagged with the batch id, so filter on that.
+ids=$(simcloud -q bundle list --tags "$BATCH" -f '{{.ID}}' 2>/dev/null | grep -E '^bundle-' || true)
+if [ -z "$ids" ]; then
+  echo "error: no output bundles tagged $BATCH (jobs not done, or none produced output)" >&2
+  echo "  check: simcloud -c $CLUSTER job list --batch $BATCH" >&2
+  exit 1
+fi
+for b in $ids; do
+  simcloud -q bundle download "$b" --to "$dl" >/dev/null 2>&1 || echo "warn: download failed for $b" >&2
+done
 
 echo "=== merging into $OUTDIR ==="
 mkdir -p "$OUTDIR"
 n=0
-# Output arrives as job-output-bundle.tgz per job; extract them first.
+# Each downloaded bundle is a gzip tarball (named bundle-XXX) of the job's /out
+# tree; extract them, then hoist out/N<N>/p<p8>/data.dat into data/.
 while IFS= read -r tgz; do
-  tar -xzf "$tgz" -C "$(dirname "$tgz")" 2>/dev/null || true
-done < <(find "$dl" -type f -name 'job-output-bundle.tgz')
-# Each bundle carries an out/N<N>/p<p8>/data.dat; hoist them into data/.
+  tar -xzf "$tgz" -C "$dl" 2>/dev/null || true
+done < <(find "$dl" -maxdepth 1 -type f -name 'bundle-*')
 while IFS= read -r f; do
   rel="${f#*out/}"           # -> N<N>/p<p8>/data.dat
   dst="$OUTDIR/$rel"
@@ -48,7 +58,7 @@ done < <(find "$dl" -type f -path '*out/N*/p*/data.dat')
 
 echo "=== merged $n cells into $OUTDIR ==="
 if [ "$n" -eq 0 ]; then
-  echo "warning: found no data.dat under $dl -- inspect it and job consoles:" >&2
+  echo "warning: found no data.dat under $dl -- inspect it:" >&2
   echo "  simcloud -c $CLUSTER job list --batch $BATCH" >&2
 else
   echo "next: uv run tools/analyze.py --all && uv run tools/heatmap.py --replot-all"

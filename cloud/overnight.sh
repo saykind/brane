@@ -26,7 +26,7 @@ OWNER="${OWNER:-hwt:atg:sph:$scuser}" \
 NET="${NET:-e57cff0a-d781-4250-8ca5-065e283c8da1}" \
 TOOLCHAIN="${TOOLCHAIN:-0}" \
 CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-12h}" \
-NS="${NS:-60,80,90,100,110,120}" P8S="${P8S:-0.3,0.4,0.5}" \
+NS="${NS:-60,70,80,90,100,110,120}" P8S="${P8S:-0.6,0.7}" \
 THERM="${THERM:-300}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
 NT="${NT:-16}" IT="${IT:-1}" \
 TAG="${TAG:-brane-overnight}" \
