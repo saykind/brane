@@ -243,6 +243,16 @@ static double replica_poisson(const Replica *rep) {
     return (var != 0.0) ? -cov / var : 0.0;
 }
 
+/* Instantaneous Delta2 = sum_q |h_q|^2 for ONE replica's current config
+ * (not the accumulated average). Used to record a per-sweep time series for
+ * autocorrelation-time (tau) measurement. */
+double replica_delta2(const Replica *rep, const Geometry *geo) {
+    int LL = geo->L * geo->L;
+    double s = 0.0;
+    for (int i = 0; i < LL; i++) s += creal(rep->h[i] * conj(rep->h[i]));
+    return s;
+}
+
 /* Mean over replicas of Delta2 = sum_q <|h_q|^2> (the quantity whose relative
  * error the adaptive driver converges). Useful for tracking thermalization. */
 double delta2_mean(const Replica *reps, int nreps, const Geometry *geo) {

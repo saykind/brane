@@ -126,6 +126,7 @@ int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
     char outdir[400] = "data";      /* base dir; descriptive subpath appended */
+    char series[400] = {0};         /* optional: per-sweep Delta2 series (tau) */
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(&cfg); return 0; }
@@ -147,6 +148,7 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
         if (sscanf(argv[i], "out=%511s", sbuf) == 1) { strncpy(outpath, sbuf, sizeof(outpath) - 1); continue; }
         if (sscanf(argv[i], "outdir=%399s", sbuf) == 1) { strncpy(outdir, sbuf, sizeof(outdir) - 1); continue; }
+        if (sscanf(argv[i], "series=%399s", sbuf) == 1) { strncpy(series, sbuf, sizeof(series) - 1); continue; }
         printf("Unrecognized argument '%s'\n", argv[i]);
         return 1;
     }
@@ -229,6 +231,9 @@ int main(int argc, char *argv[]) {
         fflush(trace);
     }
 
+    /* Optional per-sweep instantaneous Delta2 series (replica 0) for tau. */
+    double *ts = series[0] ? malloc((size_t)cfg.sweeps * sizeof(double)) : NULL;
+
     while (done < cfg.sweeps) {
         long todo = block;
         if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
@@ -238,6 +243,7 @@ int main(int argc, char *argv[]) {
             for (long s = 0; s < todo; s++) {
                 replica_sweep(rep, &geo, &cfg);
                 if ((s % cfg.meas_every) == 0) replica_measure(rep, &geo);
+                if (ts && r == 0) ts[done + s] = replica_delta2(rep, &geo);
             }
         }
         done += todo;
@@ -269,6 +275,19 @@ int main(int argc, char *argv[]) {
         }
     }
     if (trace) fclose(trace);
+    if (ts) {
+        FILE *sf = fopen(series, "w");
+        if (sf) {
+            fprintf(sf, "# per-sweep instantaneous Delta2 (replica 0)  N=%d p8=%.4f "
+                        "nt=%d it=%d therm=%ld\n", cfg.N, cfg.p8, cfg.nthreads,
+                    cfg.inner, cfg.therm);
+            fprintf(sf, "# sweep\tDelta2\n");
+            for (long s = 0; s < done; s++) fprintf(sf, "%ld\t%.10e\n", s, ts[s]);
+            fclose(sf);
+            printf("wrote series %s (%ld sweeps)\n", series, done);
+        }
+        free(ts);
+    }
 
     double elapsed = omp_get_wtime() - t0;
     Result res = result_reduce(reps, cfg.nthreads, &geo);
