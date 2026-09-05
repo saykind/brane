@@ -92,20 +92,36 @@ void replica_free(Replica *rep) {
     rep->h = NULL; rep->S = NULL; rep->dS = NULL; rep->g = NULL;
 }
 
-void replica_init(Replica *rep, const Geometry *geo, uint64_t seed, uint64_t stream) {
+void replica_init(Replica *rep, const Geometry *geo, const Config *cfg, uint64_t stream) {
     int L = geo->L;
-    pcg32_seed(&rep->rng, seed, stream);
-    /* Start from the harmonic ground-state ensemble h_q = 1/q^2 (real). */
+    pcg32_seed(&rep->rng, cfg->seed, stream);
+    /* Initial ensemble. Harmonic (default): h_q = 1/q^2 so |h_q|^2 = 1/q^4.
+     * Anomalous warm start (warm_eta>0): below the crossover q_c ~ p8 the true
+     * spectrum is |h_q|^2 ~ q^-(4-eta) rather than q^-4, so seeding with that
+     * shape shortens thermalization. We match the harmonic branch continuously
+     * at q_c: |h_q|^2 = q_c^-eta * q^-(4-eta) (equals q_c^-4 = harmonic at q_c),
+     * i.e. amplitude |h_q| = q_c^(-eta/2) * (q^2)^(-(4-eta)/4). Phases are real
+     * (thermalization randomizes them); q^2 uses the same lattice dispersion Q. */
+    double eta = cfg->warm_eta;
+    double qc2 = cfg->p8 * cfg->p8;                 /* crossover q_c^2 ~ p8^2   */
     for (int q1 = 0; q1 < L; q1++)
         for (int q2 = 0; q2 < L; q2++) {
             int i = IDX(q1, q2, L);
-            rep->h[i] = (q1 == 0 && q2 == 0) ? (1.0 / (geo->a * geo->a))
-                                             : (1.0 / geo->Q[i]);
+            if (q1 == 0 && q2 == 0) {
+                rep->h[i] = 1.0 / (geo->a * geo->a);
+            } else if (eta > 0.0 && geo->Q[i] < qc2) {
+                double amp = pow(qc2, -eta / 4.0) *          /* q_c^(-eta/2) */
+                             pow(geo->Q[i], -(4.0 - eta) / 4.0);
+                rep->h[i] = amp;
+            } else {
+                rep->h[i] = 1.0 / geo->Q[i];
+            }
             rep->g[i] = 0.0;
         }
     rep->nmeas = 0;
     rep->sum_Kx = rep->sum_Ky = rep->sum_KxKx = rep->sum_KxKy = 0.0;
     rep->proposed = rep->accepted = 0;
+    rep->or_proposed = rep->or_accepted = 0;
     calcS(rep, geo);
 }
 
@@ -133,34 +149,23 @@ void calcS(Replica *rep, const Geometry *geo) {
         }
 }
 
-/* ---- one Metropolis single-mode update ------------------------------- */
-static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg) {
-    int L = geo->L, n = cfg->n;
+/* ---- shared single-mode energy kernel -------------------------------- */
+/* Energy change w = -dE for shifting mode k (and its conjugate partner -k)
+ * by the complex amount `u`, while filling dS[q] with the induced increment
+ * of the nonlinear array S_q. Does NOT modify h or S. This is the O(L^2)
+ * analytic-increment hotspot shared by the Metropolis and over-relaxation
+ * moves (validated against a brute-force convolution in tests). `par` gates
+ * the intra-chain OpenMP parallel region. k1,k2 are wrapped to [0,L). */
+static double mode_dS_energy(Replica *rep, const Geometry *geo, const Config *cfg,
+                             int k1, int k2, double complex u, int par) {
+    int L = geo->L;
     const double *SN = geo->SN;
     const double *invQ = geo->invQ;
     const int *wrap = geo->wrap;
     double complex *h = rep->h, *S = rep->S, *dS = rep->dS;
-
-    /* Pick a mode inside the effective zone [-n, n]^2, excluding (0,0). */
-    int k1 = (int)(pcg32_next(&rep->rng) % (2u * n + 1u)) - n;
-    int k2 = (int)(pcg32_next(&rep->rng) % (2u * n + 1u)) - n;
-    if (k1 == 0 && k2 == 0) return;
-    if (k1 < 0) k1 += L;
-    if (k2 < 0) k2 += L;
-
     int ki = IDX(k1, k2, L);
     double A = geo->Q[ki];
-    double d = geo->dstep[ki];
     double A2 = A * A;
-
-    double complex z = (pcg32_double(&rep->rng) - 0.5) +
-                       (pcg32_double(&rep->rng) - 0.5) * I;
-
-    /* The energy change is a sum over all q of independent O(1) terms, each
-     * also producing dS[qi]. That makes it a parallel reduction -- the only
-     * data-parallel hotspot in an otherwise sequential Markov step. Gate on
-     * size so small lattices keep the zero-overhead serial path. */
-    int par = (cfg->inner > 1) && ((long)L * L >= BRANE_PAR_MIN_LL);
     double w = 0.0;
     #pragma omp parallel for reduction(+:w) num_threads(cfg->inner) \
             if(par) schedule(static) collapse(2)
@@ -176,28 +181,141 @@ static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg
                         SN[wrap[L + k2 - q2]] * SN[q1];      qk *= qk;
 
             double complex s =
-                  p  * conj(h[IDX(wrap[k1 + q1 + L], wrap[k2 + q2 + L], L)]) * z
-                + kq * h[IDX(wrap[2 * L - k1 - q1], wrap[2 * L - k2 - q2], L)] * z
-                + qk * h[IDX(wrap[k1 - q1 + L], wrap[k2 - q2 + L], L)] * conj(z)
-                + p  * conj(h[IDX(wrap[q1 - k1 + L], wrap[q2 - k2 + L], L)]) * conj(z);
+                  p  * conj(h[IDX(wrap[k1 + q1 + L], wrap[k2 + q2 + L], L)]) * u
+                + kq * h[IDX(wrap[2 * L - k1 - q1], wrap[2 * L - k2 - q2], L)] * u
+                + qk * h[IDX(wrap[k1 - q1 + L], wrap[k2 - q2 + L], L)] * conj(u)
+                + p  * conj(h[IDX(wrap[q1 - k1 + L], wrap[q2 - k2 + L], L)]) * conj(u);
             if ((q1 + 2 * k1) % L == 0 && (q2 + 2 * k2) % L == 0)
-                s += p * z * z * d;
+                s += p * u * u;
             if (((q1 - 2 * k1) % L + L) % L == 0 && ((q2 - 2 * k2) % L + L) % L == 0)
-                s += p * conj(z) * conj(z) * d;
-            s *= d * invQ[qi];
+                s += p * conj(u) * conj(u);
+            s *= invQ[qi];
             dS[qi] = s;
             w += creal((2.0 * S[qi] + s) * conj(s));
         }
     w *= -geo->Y / L / L;
-    w -= A2 * creal((2.0 * h[ki] + d * z) * conj(z)) * d;
+    w -= A2 * creal((2.0 * h[ki] + u) * conj(u));
+    return w;
+}
 
+/* Apply an accepted single-mode shift: h_k += u, h_{-k} += conj(u), and fold
+ * the precomputed dS into S. `par` gates the S-update parallel region. */
+static void apply_shift(Replica *rep, const Geometry *geo, const Config *cfg,
+                        int k1, int k2, double complex u, int par) {
+    int L = geo->L;
+    double complex *h = rep->h, *S = rep->S, *dS = rep->dS;
+    const int *wrap = geo->wrap;
+    h[IDX(k1, k2, L)] += u;
+    h[IDX(wrap[L - k1], wrap[L - k2], L)] += conj(u);
+    #pragma omp parallel for num_threads(cfg->inner) if(par) schedule(static)
+    for (int i = 0; i < L * L; i++) S[i] += dS[i];
+}
+
+/* Uniformly pick a mode in the effective zone [-n,n]^2 minus (0,0), returned
+ * wrapped to [0,L). Returns 0 and leaves *k1,*k2 undefined if it hits (0,0)
+ * (caller retries by skipping the step, matching the original behavior). */
+static int pick_mode(Replica *rep, const Config *cfg, int L, int *k1, int *k2) {
+    int n = cfg->n;
+    int a = (int)(pcg32_next(&rep->rng) % (2u * n + 1u)) - n;
+    int b = (int)(pcg32_next(&rep->rng) % (2u * n + 1u)) - n;
+    if (a == 0 && b == 0) return 0;
+    *k1 = a < 0 ? a + L : a;
+    *k2 = b < 0 ? b + L : b;
+    return 1;
+}
+
+/* ---- one Metropolis single-mode update ------------------------------- */
+static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg) {
+    int L = geo->L, k1, k2;
+    if (!pick_mode(rep, cfg, L, &k1, &k2)) return;
+
+    int par = (cfg->inner > 1) && ((long)L * L >= BRANE_PAR_MIN_LL);
+    double complex z = (pcg32_double(&rep->rng) - 0.5) +
+                       (pcg32_double(&rep->rng) - 0.5) * I;
+    double complex u = geo->dstep[IDX(k1, k2, L)] * z;
+
+    double w = mode_dS_energy(rep, geo, cfg, k1, k2, u, par);
     rep->proposed++;
     if (w > log(pcg32_double(&rep->rng) + 1e-300)) {
         rep->accepted++;
-        h[ki] += d * z;
-        h[IDX(wrap[L - k1], wrap[L - k2], L)] += d * conj(z);
-        #pragma omp parallel for num_threads(cfg->inner) if(par) schedule(static)
-        for (int i = 0; i < L * L; i++) S[i] += dS[i];
+        apply_shift(rep, geo, cfg, k1, k2, u, par);
+    }
+}
+
+/* ---- one over-relaxation single-mode update -------------------------- */
+/* Holding all other modes fixed, the energy is a quadratic form in the two
+ * real components of h_k -- exactly, apart from a small quartic self-coupling
+ * from the q=+-2k modes. We build that quadratic (gradient g, Hessian M) in
+ * one O(L^2) pass and reflect h_k about the conditional minimum:
+ *     u = -2 M^{-1} g   (h_k -> h_k + u = 2 x* - h_k).
+ * This reflection is a volume-preserving involution, so proposing it and
+ * accepting with the EXACT dE (which includes the quartic residual) obeys
+ * detailed balance. Because dE ~ 0 (the quadratic part is conserved exactly)
+ * the move is large yet almost always accepted -> strong decorrelation.
+ * A_q, B_q below are the coefficients of u and conj(u) in dS_q (the same
+ * linear terms as mode_dS_energy, minus the quartic self terms). */
+static void overrelax_step(Replica *rep, const Geometry *geo, const Config *cfg) {
+    int L = geo->L, k1, k2;
+    if (!pick_mode(rep, cfg, L, &k1, &k2)) return;
+
+    const double *SN = geo->SN;
+    const double *invQ = geo->invQ;
+    const int *wrap = geo->wrap;
+    const double complex *h = rep->h, *S = rep->S;
+    int ki = IDX(k1, k2, L);
+    double A2 = geo->Q[ki] * geo->Q[ki];
+    int par = (cfg->inner > 1) && ((long)L * L >= BRANE_PAR_MIN_LL);
+
+    double g1 = 0.0, g2 = 0.0, m11 = 0.0, m22 = 0.0, m12 = 0.0;
+    #pragma omp parallel for reduction(+:g1,g2,m11,m22,m12) \
+            num_threads(cfg->inner) if(par) schedule(static) collapse(2)
+    for (int q1 = 0; q1 < L; q1++)
+        for (int q2 = 0; q2 < L; q2++) {
+            int qi = IDX(q1, q2, L);
+            if (q1 == 0 && q2 == 0) continue;
+
+            double p = SN[k1] * SN[q2] - SN[k2] * SN[q1];  p *= p;
+            double kq = SN[wrap[k2 + q2 + L]] * SN[q1] -
+                        SN[wrap[k1 + q1 + L]] * SN[q2];      kq *= kq;
+            double qk = SN[wrap[L + k1 - q1]] * SN[q2] -
+                        SN[wrap[L + k2 - q2]] * SN[q1];      qk *= qk;
+
+            double iq = invQ[qi];
+            double complex Aq = iq * (p  * conj(h[IDX(wrap[k1 + q1 + L], wrap[k2 + q2 + L], L)])
+                                    + kq * h[IDX(wrap[2 * L - k1 - q1], wrap[2 * L - k2 - q2], L)]);
+            double complex Bq = iq * (qk * h[IDX(wrap[k1 - q1 + L], wrap[k2 - q2 + L], L)]
+                                    + p  * conj(h[IDX(wrap[q1 - k1 + L], wrap[q2 - k2 + L], L)]));
+            double complex SA = S[qi] * conj(Aq);
+            double complex SB = S[qi] * conj(Bq);
+            g1 += creal(SA) + creal(SB);
+            g2 += cimag(SA) - cimag(SB);
+            double aabb = creal(Aq) * creal(Aq) + cimag(Aq) * cimag(Aq)
+                        + creal(Bq) * creal(Bq) + cimag(Bq) * cimag(Bq);
+            double complex c = Aq * conj(Bq);
+            m11 += aabb + 2.0 * creal(c);
+            m22 += aabb - 2.0 * creal(c);
+            m12 += -2.0 * cimag(c);
+        }
+    double f = 2.0 * geo->Y / L / L;
+    g1 = 2.0 * A2 * creal(h[ki]) + f * g1;
+    g2 = 2.0 * A2 * cimag(h[ki]) + f * g2;
+    double M11 = 2.0 * A2 + f * m11;
+    double M22 = 2.0 * A2 + f * m22;
+    double M12 = f * m12;
+    double det = M11 * M22 - M12 * M12;
+
+    rep->or_proposed++;
+    if (!(det > 0.0)) return;   /* non-positive-definite curvature: skip move */
+
+    /* u = -2 M^{-1} g */
+    double ux = -2.0 * (M22 * g1 - M12 * g2) / det;
+    double uy = -2.0 * (-M12 * g1 + M11 * g2) / det;
+    double complex u = ux + uy * I;
+
+    double w = mode_dS_energy(rep, geo, cfg, k1, k2, u, par);
+    if (w > log(pcg32_double(&rep->rng) + 1e-300)) {
+        rep->or_accepted++;
+        apply_shift(rep, geo, cfg, k1, k2, u, par);
     }
 }
 
@@ -205,6 +323,10 @@ void replica_sweep(Replica *rep, const Geometry *geo, const Config *cfg) {
     int l = 2 * cfg->n + 1;
     long steps = (long)l * l;
     for (long s = 0; s < steps; s++) metropolis_step(rep, geo, cfg);
+    /* Interleave over-relaxation passes: OR alone is (near-)microcanonical and
+     * not ergodic, so it must be mixed with Metropolis. */
+    for (int r = 0; r < cfg->overrelax; r++)
+        for (long s = 0; s < steps; s++) overrelax_step(rep, geo, cfg);
 }
 
 /* ---- observables ----------------------------------------------------- */

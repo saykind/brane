@@ -51,6 +51,8 @@ static Config default_config(void) {
     c.eps = 0.005;       /* target rel. stat. error on Delta2 (0 disables)  */
     c.min_sweeps = 200;  /* don't stop before this many measurement sweeps   */
     c.block = 20;        /* sweeps between convergence checks                */
+    c.overrelax = 0;     /* over-relaxation sweeps per Metropolis sweep      */
+    c.warm_eta = 0.0;    /* anomalous warm start exponent (0 = harmonic)     */
     return c;
 }
 
@@ -69,6 +71,8 @@ static void usage(const Config *d) {
     printf("  eps=<float>       target rel. error on Delta2; 0=off (%.3f)\n", d->eps);
     printf("  minsweeps=<int>   min sweeps before stopping       (%ld)\n", d->min_sweeps);
     printf("  block=<int>       sweeps between convergence checks(%d)\n", d->block);
+    printf("  overrelax=<int>   over-relaxation sweeps per MC sweep (%d)\n", d->overrelax);
+    printf("  warmeta=<float>   anomalous warm-start exponent; 0=harmonic (%.2f)\n", d->warm_eta);
     printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
@@ -85,7 +89,8 @@ static void usage(const Config *d) {
  * key=value tokens (tools/analyze.py reads any k=v it finds). */
 static void write_result_file(const char *outpath, const Config *cfg,
                               const Geometry *geo, const Result *res,
-                              int L, long done, int converged, double wall_s) {
+                              int L, long done, int converged, double wall_s,
+                              double or_rate) {
     char tmp[600];
     snprintf(tmp, sizeof(tmp), "%s.tmp", outpath);
     FILE *f = fopen(tmp, "w");
@@ -105,6 +110,8 @@ static void write_result_file(const char *outpath, const Config *cfg,
             cfg->eps, res->rel_err, converged);
     fprintf(f, "# samples=%ld accept_rate=%.4f wall_s=%.2f nu=%.6f nu_err=%.6f\n",
             res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
+    fprintf(f, "# overrelax=%d or_accept=%.4f warm_eta=%.3f\n",
+            cfg->overrelax, or_rate, cfg->warm_eta);
     fprintf(f, "# engine_sha=%s\n", GIT_SHA);
     fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
     for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
@@ -120,6 +127,14 @@ static void write_result_file(const char *outpath, const Config *cfg,
         }
     fclose(f);
     rename(tmp, outpath);
+}
+
+/* Aggregate over-relaxation acceptance rate across replicas (0 if OR is off
+ * or no OR moves have been proposed yet). */
+static double or_accept_rate(const Replica *reps, int n) {
+    long prop = 0, acc = 0;
+    for (int r = 0; r < n; r++) { prop += reps[r].or_proposed; acc += reps[r].or_accepted; }
+    return prop ? (double)acc / prop : 0.0;
 }
 
 int main(int argc, char *argv[]) {
@@ -143,6 +158,8 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "eps=%lf", &cfg.eps) == 1) continue;
         if (sscanf(argv[i], "minsweeps=%ld", &cfg.min_sweeps) == 1) continue;
         if (sscanf(argv[i], "block=%d", &cfg.block) == 1) continue;
+        if (sscanf(argv[i], "overrelax=%d", &cfg.overrelax) == 1) continue;
+        if (sscanf(argv[i], "warmeta=%lf", &cfg.warm_eta) == 1) continue;
         if (sscanf(argv[i], "meas=%d", &cfg.meas_every) == 1) continue;
         if (sscanf(argv[i], "d0=%lf", &cfg.d0) == 1) continue;
         if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
@@ -156,6 +173,7 @@ int main(int argc, char *argv[]) {
     if (cfg.nthreads < 1) cfg.nthreads = 1;
     if (cfg.inner < 1) cfg.inner = 1;
     if (cfg.meas_every < 1) cfg.meas_every = 1;
+    if (cfg.overrelax < 0) cfg.overrelax = 0;
     omp_set_num_threads(cfg.nthreads);
     if (cfg.inner > 1) omp_set_max_active_levels(2);  /* allow nested inner teams */
 
@@ -166,6 +184,8 @@ int main(int argc, char *argv[]) {
            cfg.N, L, cfg.n, cfg.p8, cfg.nthreads, cfg.inner, cfg.nthreads * cfg.inner);
     printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
            cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
+    if (cfg.overrelax > 0 || cfg.warm_eta > 0)
+        printf("       overrelax=%d warm_eta=%.3f\n", cfg.overrelax, cfg.warm_eta);
 
     /* Resolve the output path and create its directory up front, so per-block
      * checkpoints during the run can write to it. Descriptive layout keeps
@@ -202,7 +222,7 @@ int main(int argc, char *argv[]) {
         int r = omp_get_thread_num();
         Replica *rep = &reps[r];
         replica_alloc(rep, &geo);
-        replica_init(rep, &geo, cfg.seed, (uint64_t)(r + 1));
+        replica_init(rep, &geo, &cfg, (uint64_t)(r + 1));
         for (long s = 0; s < cfg.therm; s++)
             replica_sweep(rep, &geo, &cfg);
     }
@@ -268,7 +288,7 @@ int main(int argc, char *argv[]) {
             Result cres = result_reduce(reps, cfg.nthreads, &geo);
             cres.rel_err = rel;
             write_result_file(outpath, &cfg, &geo, &cres, L, done, converged,
-                              omp_get_wtime() - t0);
+                              omp_get_wtime() - t0, or_accept_rate(reps, cfg.nthreads));
             result_free(&cres);
             last_ckpt = omp_get_wtime();
             if (cfg.verbose) printf("  [checkpoint @ %ld sweeps]\n", done);
@@ -301,9 +321,13 @@ int main(int argc, char *argv[]) {
            converged ? "converged " : (cfg.eps > 0 ? "NOT converged " : "fixed-length "),
            cfg.eps);
     printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
+    if (cfg.overrelax > 0)
+        printf("over-relaxation accept = %.1f%%  (%d OR sweeps / MC sweep)\n",
+               100.0 * or_accept_rate(reps, cfg.nthreads), cfg.overrelax);
 
     /* ---- write final Green function G(q) and inverse Green G^{-1}(q) --- */
-    write_result_file(outpath, &cfg, &geo, &res, L, done, converged, elapsed);
+    write_result_file(outpath, &cfg, &geo, &res, L, done, converged, elapsed,
+                      or_accept_rate(reps, cfg.nthreads));
     printf("wrote %s\n", outpath);
 
     for (int r = 0; r < cfg.nthreads; r++) replica_free(&reps[r]);

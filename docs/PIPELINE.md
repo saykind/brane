@@ -16,6 +16,8 @@ Replica-parallel Fourier Monte Carlo. Key options (`./brane -h`):
 | `therm`, `sweeps` | thermalization + max measurement sweeps |
 | `eps` | adaptive stop on rel. error of Δ₂=Σ_q⟨|h_q|²⟩ (`eps=0` → fixed length) |
 | `minsweeps`, `block`, `meas`, `d0`, `seed` | convergence floor, block size, measure stride, step, RNG seed |
+| `overrelax` | over-relaxation sweeps interleaved per Metropolis sweep (`0`=off) — decorrelation, see below |
+| `warmeta` | anomalous warm-start exponent η; seed `\|h_q\|²~q^{-(4-η)}` below `q_c~p8` (`0`=harmonic `q⁻⁴`) |
 | `outdir` | base dir; engine builds the descriptive path (below) |
 | `out` | explicit output path (overrides `outdir`) |
 | `series` | write per-sweep instantaneous Δ₂ (replica 0) for τ measurement |
@@ -94,14 +96,47 @@ From a single N=100 study (`tools/study_convergence.py`):
 - Thermalization (running-mean Δ₂) settles by ~150 sweeps → `therm=300` is safe.
 - `eps=0.005` reaches in ~500–800 sweeps at nt=16 — a reasonable production goal.
 
+## Decorrelation & warm start (implemented)
+
+Two levers were added to the engine and validated for correctness; both are
+**large-N tools** whose benefit is marginal in the small-N regime tested so far.
+
+**Over-relaxation** (`overrelax=R`). Holding all other modes fixed, a single
+mode's conditional energy is exactly quadratic apart from a tiny quartic
+self-coupling (the `q=±2k` terms). The move builds that quadratic (gradient
+`g`, Hessian `M`) in one O(L²) pass and reflects the mode about the conditional
+minimum, `u = −2M⁻¹g` (a volume-preserving involution), then accepts with the
+*exact* ΔE — which corrects the quartic residual and keeps detailed balance
+exact. `R` such sweeps are interleaved per Metropolis sweep (OR alone is
+near-microcanonical, hence non-ergodic). Reuses the validated incremental-S
+kernel (`mode_dS_energy`).
+- *Correctness:* the S-consistency + reality test covers the OR path
+  (`make test`), and a cross-replica comparison (nt=8) found R=1 vs R=0
+  statistically identical — median |z|=0.66, `|z|>2` in 5.1% of modes, `|z|>3`
+  in 0.6% (Gaussian expects 4.6%, 0.3%). OR reflects with ~100% acceptance.
+- *Benefit (N=36, p8=0.4):* τ_int(Δ₂) drops 1.25→0.71→0.66 sweeps for R=0,1,2,
+  and low-q error bars shrink markedly. **But** cost is ~2.8×/5.2× per sweep, so
+  net efficiency (independent samples per wall-second) is ×0.62/×0.36 vs R=0 —
+  net-negative here because τ≈1 already. OR is expected to pay off only in the
+  critical-slowing-down regime (large N, large τ); **not yet demonstrated to win
+  on wall-clock** — needs a large-N test.
+
+**Anomalous warm start** (`warmeta=η`). Seeds `|h_q|² = q_c^{−η} q^{−(4−η)}`
+below the crossover `q_c≈p8` (matched continuously to harmonic `q⁻⁴` above),
+instead of pure harmonic `q⁻⁴`. `η≈0.7` is the anomalous exponent.
+- *Effect (ensemble-averaged over 12 seeds, N=40):* the anomalous start begins
+  at ⟨Δ₂⟩ ≈ +46% above equilibrium vs +100% for the harmonic start, and reaches
+  equilibrium a few sweeps sooner (+5% vs +11% by sweep 5). **Caveat:** in this
+  regime thermalization is already only ~10 sweeps (≪ the conservative
+  `therm=300`), so the absolute saving is small; it matters more if `therm` is
+  tuned down or at large N where thermalization is slower.
+
 ## Open items / TODO
 
+- **Large-N decorrelation test** — measure whether over-relaxation's τ reduction
+  beats its ~3× per-sweep cost at large N (where τ is large). Needs a cloud run.
 - **Refine `plateau_lowq`** — the current heuristic can be pulled by a low-q
   finite-size shelf or the high-q crossover approach. Needs a principled,
   crossover-aware estimator. Do **not** tune it to reproduce an expected η.
-- **Over-relaxation** — microcanonical moves to cut the autocorrelation time τ
-  (biggest expected decorrelation win). Measure τ before/after with `autocorr.py`.
-- **Anomalous warm start** — seed `|h_q|² ~ q^{−(4−η)}` (η≈0.7) instead of the
-  harmonic `q^{−4}` to shorten thermalization.
 - **Proper error-vs-samples study** — many independent seeds, per-observable
   spread, to actually establish the scaling law and finalize eps/therm.
