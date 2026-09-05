@@ -1,0 +1,18 @@
+[project]
+name = "brane-analysis"
+version = "0.1.0"
+description = "Analysis and plotting tools for the brane Fourier Monte Carlo membrane simulation"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.brane]
+# The compiled simulation lives in C (see Makefile / src/); this project only
+# provides the Python post-processing layer (tools/analyze.py).
+entry = "tools/analyze.py"
