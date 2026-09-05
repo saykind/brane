@@ -10,37 +10,30 @@ The height-height correlator is G(q) = <|h_q|^2>. Harmonic theory gives
 G^-1 ~ q^4; anomalous elasticity gives G^-1 ~ q^(4-eta) for q << q8 ~ p8.
 The two regimes join at the crossover scale q8.
 
-Because the theory is isotropic (G depends only on q_r = |q|), we map every
-mode (q_x, q_y) to q_r and *rotationally average* G over log-spaced |q| shells
-(the theta average) -- using all L^2 modes, not just axes/diagonals.
+Method (no angular averaging)
+-----------------------------
+We do NOT rotationally average G over |q| shells (that would collapse the
+membrane's anisotropy). Instead EVERY mode (q_x, q_y) is kept as a point
+(q_r=|q|, G^-1), and:
 
-Choosing the fit window
------------------------
-eta is *defined* as 4 - d ln G^-1/d ln q in the q->0 limit, so the principled,
-assumption-light estimator is the plateau of the effective exponent
+  * windowed eta -- unbinned weighted log-log fit of G^-1 vs q_r over the fit
+    window; eta = 4 - slope. Biased low if the window reaches the crossover.
+  * running eta_eff(q_r) -- sliding local log-log slope over the raw point
+    cloud (running_eta): eta_eff = 4 - d ln G^-1/d ln q at each q_r scale.
+  * low-q plateau -- PRIMARY (in principle): the flat part of eta_eff at low q
+    is the true q->0 exponent. plateau_lowq() is a FIRST heuristic for this and
+    is known to be imperfect (see its docstring) -- to be refined properly.
 
-    eta_eff(q) = 4 - d ln G^-1 / d ln q
-
-read over the scaling window (flat part of eta_eff, below the crossover q8 and
-above finite-size effects). If eta_eff has no plateau, this lattice simply
-cannot determine eta -- no single number should be forced. Three numbers are
-reported:
-
-  * plateau eta   -- PRIMARY: mean of eta_eff over the window, with its spread.
-  * windowed slope-- straight log-log fit over the same window (for its error
-    bar); equivalent to the plateau when the window is flat.
-  * crossover fit -- CROSS-CHECK ONLY. Fit to the phenomenological ansatz
-    G^-1 = C q^4 (1 + (q8/q)^eta), i.e. kappa(q)=kappa0[1+(q8/q)^eta] from the
-    membrane literature. It captures both asymptotes but the crossover *shape*
-    is not derived from theory, so with a limited q-range the eta it returns is
-    model-dependent and can be biased -- treat it as indicative, not truth.
+Plots color every mode by its polar angle so anisotropy is visible. Combined
+multi-N analysis pools all modes at fixed p8 (no averaging) into one fit.
 
 Only numpy is required. matplotlib is used if present (gnuplot fallback else).
 
 Usage
 -----
-    python3 tools/analyze.py data/N=40.dat
-    python3 tools/analyze.py data/N=40.dat --qmin 0.23 --qmax 0.40
+    python3 tools/analyze.py data/N60/p0.40/<run>.dat
+    python3 tools/analyze.py --all 'data/N*/p*/*/*.dat'
+    python3 tools/analyze.py --combined 'example_data/N=*.dat'
 """
 import argparse
 import os
@@ -170,10 +163,13 @@ def running_eta(q, Ginv, nwin=40, width=1.6, min_pts=15):
 def plateau_lowq(qc, ee, tol=0.05, minpts=5):
     """Extract the low-q plateau of the running exponent eta_eff(q_r): the true
     q->0 anomalous exponent. Finds the WIDEST contiguous window of eta_eff whose
-    scatter (std) is below `tol`, preferring lower q. The erratic super-low-q
-    points (finite-size breakdown) and the high-q crossover rise both fail the
-    flatness test and are excluded automatically. Returns
-    (eta, err, (q_lo, q_hi), npts) or None."""
+    scatter (std) is below `tol`, preferring lower q.
+
+    NOTE: this is a first, imperfect heuristic -- it does not always isolate the
+    physical intermediate-q plateau (e.g. it can be pulled by a low-q finite-size
+    shelf or the high-q approach to the crossover). It needs a principled
+    refinement (changepoint / crossover-aware fit); do NOT tune its parameters to
+    reproduce an expected eta. Returns (eta, err, (q_lo, q_hi), npts) or None."""
     m = np.isfinite(ee) & (qc > 0)
     qc, ee = qc[m], ee[m]
     o = np.argsort(qc); qc, ee = qc[o], ee[o]
@@ -298,11 +294,12 @@ def fit_eta_crossover(qr, Ginv_r, cnt, qlo, qhi, eta0=0.75, q8_0=None):
 # every N -- each kept only inside its own scaling window [3a_N, p8] -- gives a
 # far denser, wider q-range than any single lattice and a tighter slope. We only
 # ever pool cells with the SAME p8 (mixing couplings mixes crossover scales).
-def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
-                   tol=1e-3):
-    """Pool EVERY mode (q_r, G^-1, err, N) -- no angular averaging -- from every
-    cell whose p8 matches p8_target, each restricted to its own window
-    [3 a_N, p8]. (nbins kept for signature compatibility; unused.)"""
+def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", qmax=1.3,
+                   tol=1e-3, **_ignore):
+    """Pool EVERY mode (q_r, G^-1, err, N) -- no angular averaging, no window
+    restriction -- from every cell whose p8 matches p8_target, over the full
+    range 0 < q_r <= qmax (so the combined plot shows the smallest q up to the
+    crossover/UV). The FIT window is applied later by fit_pooled."""
     import glob
     q, gi, ge, Ns = [], [], [], []
     for f in sorted(glob.glob(pattern)):
@@ -310,21 +307,22 @@ def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
         p8 = float(header["p8"])
         if abs(p8 - p8_target) > tol:
             continue
-        N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
-        gv = (G > 0) & np.isfinite(G) & (qmag > 0)
-        uq = np.unique(qmag[gv])
-        qlo = uq[2] if len(uq) >= 3 else (uq[0] if len(uq) else 3 * a)  # 3rd smallest |q|
-        m = gv & (qmag >= qlo) & (qmag <= p8)
+        N = int(header["N"])
+        m = (qmag > 0) & (qmag <= qmax) & (G > 0) & np.isfinite(G)
         q.extend(qmag[m]); gi.extend(1.0 / G[m])
         ge.extend(np.where(Gerr[m] > 0, Gerr[m] / G[m] ** 2, 0.0))
         Ns.extend([N] * int(m.sum()))
     return (np.array(q), np.array(gi), np.array(ge), np.array(Ns, int))
 
 
-def fit_pooled(q, gi, ge):
-    """Inverse-variance-weighted log-log slope of the pooled points.
-    Returns (eta, err, npts); eta is None if fewer than 3 usable points."""
+def fit_pooled(q, gi, ge, qlo=None, qhi=None):
+    """Inverse-variance-weighted log-log slope of the pooled points over the fit
+    window [qlo, qhi] (defaults: all points). Returns (eta, err, npts)."""
     m = (q > 0) & (gi > 0) & np.isfinite(gi)
+    if qlo is not None:
+        m &= q >= qlo
+    if qhi is not None:
+        m &= q <= qhi
     if m.sum() < 3:
         return None, None, int(m.sum())
     x, y = np.log(q[m]), np.log(gi[m])
@@ -413,15 +411,17 @@ def combined_all(pattern="data/N*/p*/*/*.dat", nbins=60, outdir="plots/combined"
     os.makedirs(outdir, exist_ok=True)
     rows = []
     for p8 in p8s:
-        q, gi, ge, Ns = collect_pooled(p8, pattern, nbins)
+        q, gi, ge, Ns = collect_pooled(p8, pattern)
         if len(q) < 3:
             print(f"  p8={p8:.2f}: only {len(q)} pooled pts, skipping")
             continue
-        eta, err, npts = fit_pooled(q, gi, ge)
+        uq = np.unique(q); wlo = uq[2] if len(uq) >= 3 else uq[0]  # 3rd-smallest q
+        whi = p8
+        eta, err, npts = fit_pooled(q, gi, ge, wlo, whi)
         nN = len(set(Ns.tolist()))
         pl = plot_combined(q, gi, ge, Ns, eta, err,
                            os.path.join(outdir, f"p{p8:.2f}.png"),
-                           float(q.min()), p8)
+                           float(wlo), whi, coupling=p8)
         etp = pl[0] if pl else None
         erp = pl[1] if pl else None
         rows.append(dict(p8=p8, eta=eta, err=err, npts=npts, nN=nN,
@@ -757,17 +757,20 @@ def main():
 
     if args.combined or args.combined_p8 is not None:
         if args.combined_p8 is not None:
-            q, gi, ge, Ns = collect_pooled(args.combined_p8, nbins=args.nbins)
+            q, gi, ge, Ns = collect_pooled(args.combined_p8)
             if len(q) < 3:
                 sys.exit(f"only {len(q)} pooled points at p8={args.combined_p8}")
-            eta, err, npts = fit_pooled(q, gi, ge)
+            uq = np.unique(q); wlo = uq[2] if len(uq) >= 3 else uq[0]
+            whi = args.combined_p8
+            eta, err, npts = fit_pooled(q, gi, ge, wlo, whi)
             nN = len(set(Ns.tolist()))
-            print(f"p8={args.combined_p8:.2f}: eta={eta:.3f} +/- {err:.3f}  "
-                  f"({nN} sizes, {npts} pts)")
             os.makedirs("plots/combined", exist_ok=True)
-            plot_combined(q, gi, ge, Ns, eta, err,
-                          f"plots/combined/p{args.combined_p8:.2f}.png",
-                          float(q.min()), args.combined_p8)
+            pl = plot_combined(q, gi, ge, Ns, eta, err,
+                               f"plots/combined/p{args.combined_p8:.2f}.png",
+                               float(wlo), whi, coupling=args.combined_p8)
+            pstr = f"{pl[0]:.3f}+/-{pl[1]:.3f}" if pl else "n/a"
+            print(f"p8={args.combined_p8:.2f}: low-q plateau eta={pstr} [PRIMARY]  "
+                  f"window eta={eta:.3f}+/-{err:.3f}  ({nN} sizes, {npts} pts)")
         else:
             combined_all(pattern=args.combined, nbins=args.nbins)
         return
