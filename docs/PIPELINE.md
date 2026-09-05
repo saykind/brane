@@ -97,6 +97,7 @@ exponent with plateau). `--all [GLOB]` batch-plots to `plots/<mirror>/`.
 |---|---|
 | `tools/analyze.py` | per-file & combined η analysis + plots |
 | `tools/autocorr.py` | integrated autocorrelation time τ from a `series=` file |
+| `tools/plot_acceptance.py` | acceptance vs sweep + vs \|q\| from a run's `.trace`/`.accept` |
 | `tools/study_convergence.py` | error/thermalization vs sweeps from a `.trace` or log |
 | `tools/reformat_legacy.py` | legacy dump → modern format |
 | `tools/heatmap.py`, `green_map.py`, `scaling.py` | grids / maps / finite-size |
