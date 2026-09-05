@@ -5,11 +5,12 @@
 # engine additionally checkpoints each cell's data.dat every 60s as a backup,
 # so even a killed cell keeps its latest data.
 #
-# Grid: N in {60,80,90,100,110,120} x p8 in {0.3,0.4,0.5} = 18 cells, one job
-# each, 16 replicas/cell. Calibrated on M2 Ultra: N=100 ~ 9.7 s/sweep, N=120 ~
-# 20 s/sweep, so therm=300 sweeps=800 => N=120 ~ 6.2h wall (the slowest cell);
-# smaller N finish sooner. 12h timeout leaves comfortable margin. Total wall ~
-# slowest cell (cells run in parallel).
+# Grid: N in {140,160} x p8 in {0.3,0.4,0.5,0.6,0.7} = 10 cells, one job each,
+# 16 replicas/cell. Calibrated on M2 Ultra: N=100 ~ 9.7 s/sweep, scaling ~N^4,
+# so N=140 ~ 37 s/sweep and N=160 ~ 64 s/sweep. With therm=300 sweeps=800:
+# N=140 ~ 11.4h, N=160 ~ 19.5h wall (the slowest cell). 24h timeout leaves
+# margin so every cell COMPLETES (Simcloud exports the output bundle only on
+# completion; a timeout-killed cell loses its data). Total wall ~ slowest cell.
 #
 # Usage:
 #   bash cloud/overnight.sh                 # launch with defaults below
@@ -25,8 +26,8 @@ CLUSTER="${CLUSTER:-mr2-as}" \
 OWNER="${OWNER:-hwt:atg:sph:$scuser}" \
 NET="${NET:-e57cff0a-d781-4250-8ca5-065e283c8da1}" \
 TOOLCHAIN="${TOOLCHAIN:-0}" \
-CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-12h}" \
-NS="${NS:-60,70,80,90,100,110,120}" P8S="${P8S:-0.6,0.7}" \
+CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-24h}" \
+NS="${NS:-140,160}" P8S="${P8S:-0.3,0.4,0.5,0.6,0.7}" \
 THERM="${THERM:-300}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
 NT="${NT:-16}" IT="${IT:-1}" \
 TAG="${TAG:-brane-overnight}" \
