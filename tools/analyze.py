@@ -167,6 +167,37 @@ def running_eta(q, Ginv, nwin=40, width=1.6, min_pts=15):
     return np.array(cen), np.array(eta)
 
 
+def plateau_lowq(qc, ee, tol=0.05, minpts=5):
+    """Extract the low-q plateau of the running exponent eta_eff(q_r): the true
+    q->0 anomalous exponent. Finds the WIDEST contiguous window of eta_eff whose
+    scatter (std) is below `tol`, preferring lower q. The erratic super-low-q
+    points (finite-size breakdown) and the high-q crossover rise both fail the
+    flatness test and are excluded automatically. Returns
+    (eta, err, (q_lo, q_hi), npts) or None."""
+    m = np.isfinite(ee) & (qc > 0)
+    qc, ee = qc[m], ee[m]
+    o = np.argsort(qc); qc, ee = qc[o], ee[o]
+    n = len(qc)
+    if n < minpts:
+        return None
+    best = None                       # ((npts, -q_lo), i, j)
+    for i in range(n):
+        for j in range(i + minpts, n + 1):
+            seg = ee[i:j]
+            if seg.std() <= tol:
+                cand = (j - i, -qc[i])
+                if best is None or cand > best[0]:
+                    best = (cand, i, j)
+    if best is None:                  # nothing flat enough: take flattest fixed window
+        W = max(minpts, n // 3)
+        _, i = min((ee[k:k + W].std(), k) for k in range(0, n - W + 1)); j = i + W
+    else:
+        _, i, j = best
+    seg = ee[i:j]
+    return (float(seg.mean()), float(seg.std() / np.sqrt(len(seg))),
+            (float(qc[i]), float(qc[j - 1])), int(len(seg)))
+
+
 def plateau_eta(qr, Ginv_r, cnt, qlo, qhi):
     """Primary, assumption-light estimator: the mean of eta_eff(q) over the
     scaling window [qlo, qhi] (which should be the flat part of eta_eff, below
@@ -280,7 +311,10 @@ def collect_pooled(p8_target, pattern="data/N*/p*/*/*.dat", nbins=60,
         if abs(p8 - p8_target) > tol:
             continue
         N = int(header["N"]); L = float(header["L"]); a = 2 * np.pi / L
-        m = (qmag >= 3 * a) & (qmag <= p8) & (G > 0) & np.isfinite(G)
+        gv = (G > 0) & np.isfinite(G) & (qmag > 0)
+        uq = np.unique(qmag[gv])
+        qlo = uq[2] if len(uq) >= 3 else (uq[0] if len(uq) else 3 * a)  # 3rd smallest |q|
+        m = gv & (qmag >= qlo) & (qmag <= p8)
         q.extend(qmag[m]); gi.extend(1.0 / G[m])
         ge.extend(np.where(Gerr[m] > 0, Gerr[m] / G[m] ** 2, 0.0))
         Ns.extend([N] * int(m.sum()))
@@ -304,58 +338,68 @@ def fit_pooled(q, gi, ge):
 
 
 def plot_combined(q, gi, ge, Ns, eta, err, png, wlo, whi, coupling=None):
-    """Overlay every N's radial-averaged points (colored by N, over the FULL q
-    range they were given) with the single combined slope fit q^(4-eta).
-
-    The fit itself uses only points inside the window [wlo, whi]; that window is
-    shaded, the fit line is solid inside it and dotted (extrapolation) outside,
-    and the q^4 harmonic reference spans the whole plotted range. coupling, if
-    given, is the physical p8/q8 shown in the title (it differs from the window
-    ceiling when the fit is capped below the crossover, as for the legacy data).
-    """
+    """Two panels, no angular averaging:
+      left  - every mode (q_r, Ginv) colored by N + windowed power-law fit
+      right - running exponent eta_eff(q_r) of the pooled cloud, with the
+              auto-detected LOW-Q PLATEAU (the true q->0 exponent) shaded.
+    Returns the plateau (eta, err, (q_lo,q_hi), npts) or None."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         print("matplotlib missing; skipping combined plot.")
-        return
-    fig, ax = plt.subplots(figsize=(7.5, 6))
+        return None
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 5.5))
     uN = sorted(set(Ns.tolist()))
     cmap = plt.get_cmap("viridis")
     for i, n in enumerate(uN):
         s = Ns == n
         c = cmap(i / max(1, len(uN) - 1))
-        # every mode is a point (no angular averaging); dense -> small+alpha
-        ax.scatter(q[s], gi[s], s=4, alpha=0.35, color=c, linewidths=0,
-                   rasterized=True, label=f"N={n}")
+        axL.scatter(q[s], gi[s], s=4, alpha=0.35, color=c, linewidths=0,
+                    rasterized=True, label=f"N={n}")
     qq = np.logspace(np.log10(q.min()), np.log10(q.max()), 300)
-    # anchor reference lines at the geometric mean of the IN-WINDOW points
     inpts = (q >= wlo) & (q <= whi)
     q0 = float(np.exp(np.mean(np.log(q[inpts]))))
     g0 = float(np.exp(np.mean(np.log(gi[inpts]))))
-    ax.loglog(qq, g0 * (qq / q0) ** 4, "--", color="C3", lw=1.2,
-              label=r"$q^4$ (harmonic)")
+    axL.loglog(qq, g0 * (qq / q0) ** 4, "--", color="C3", lw=1.2,
+               label=r"$q^4$ (harmonic)")
     if eta is not None:
         inw = (qq >= wlo) & (qq <= whi)
         gline = g0 * (qq / q0) ** (4 - eta)
-        ax.loglog(qq[~inw], gline[~inw], ":", color="k", lw=1.2, alpha=0.6)
-        ax.loglog(qq[inw], gline[inw], "-", color="k", lw=2,
-                  label=rf"combined fit $\eta={eta:.3f}\pm{err:.3f}$")
-        ax.axvspan(wlo, whi, color="C1", alpha=0.12, label="fit window")
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel(r"$q_r=|q|$"); ax.set_ylabel(r"$G^{-1}(q_r)$")
-    if coupling is not None:
-        ttl = (rf"Combined multi-$N$ fit, $q_8\!\sim\!p_8={coupling:.2f}$, "
-               rf"window $[{wlo:.3f},{whi:.3f}]$  ({len(uN)} sizes, {len(q)} pts)")
-    else:
-        ttl = (rf"Combined multi-$N$ fit at $p_8={whi:.2f}$  "
-               rf"({len(uN)} sizes, {len(q)} pts)")
-    ax.set_title(ttl)
-    ax.legend(frameon=False, fontsize=8, ncol=2)
-    ax.grid(True, which="both", alpha=0.3)
+        axL.loglog(qq[~inw], gline[~inw], ":", color="k", lw=1.2, alpha=0.6)
+        axL.loglog(qq[inw], gline[inw], "-", color="k", lw=2,
+                   label=rf"window fit $\eta={eta:.3f}$")
+        axL.axvspan(wlo, whi, color="C1", alpha=0.12, label="fit window")
+    axL.set_xscale("log"); axL.set_yscale("log")
+    axL.set_xlabel(r"$q_r=|q|$"); axL.set_ylabel(r"$G^{-1}(q_r)$  (every mode)")
+    ttl = (rf"Combined multi-$N$, $p_8={coupling if coupling is not None else whi:.2f}$"
+           rf"  ({len(uN)} sizes, {len(q)} modes)")
+    axL.set_title(ttl)
+    axL.legend(frameon=False, fontsize=7, ncol=2); axL.grid(True, which="both", alpha=0.3)
+
+    # right: running exponent + low-q plateau
+    qc, ee = running_eta(q, gi)
+    pl = plateau_lowq(qc, ee) if len(qc) else None
+    if len(qc):
+        axR.semilogx(qc, ee, "-", color="C0", lw=1.5, label=r"$\eta_{eff}(q_r)$")
+    if eta is not None:
+        axR.axhline(eta, ls="--", color="C1", alpha=0.7,
+                    label=rf"window fit $\eta={eta:.3f}$")
+    if pl is not None:
+        etp, erp, (qlo, qhi), npl = pl
+        axR.axvspan(qlo, qhi, color="C2", alpha=0.15)
+        axR.axhline(etp, ls="-", color="C2", lw=2,
+                    label=rf"low-$q$ plateau $\eta={etp:.3f}\pm{erp:.3f}$")
+    axR.axhline(0.0, color="0.8", lw=0.8)
+    axR.set_ylim(-0.5, 4.2)
+    axR.set_xlabel(r"$q_r$"); axR.set_ylabel(r"$\eta_{eff}=4-d\ln G^{-1}/d\ln q$")
+    axR.set_title("Running exponent + low-$q$ plateau")
+    axR.legend(frameon=False, fontsize=8); axR.grid(True, which="both", alpha=0.3)
+
     fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
     print(f"[plot] wrote {png}")
+    return pl
 
 
 def combined_all(pattern="data/N*/p*/*/*.dat", nbins=60, outdir="plots/combined"):
@@ -375,19 +419,26 @@ def combined_all(pattern="data/N*/p*/*/*.dat", nbins=60, outdir="plots/combined"
             continue
         eta, err, npts = fit_pooled(q, gi, ge)
         nN = len(set(Ns.tolist()))
-        rows.append(dict(p8=p8, eta=eta, err=err, npts=npts, nN=nN))
-        estr = f"{eta:.3f} +/- {err:.3f}" if eta is not None else "n/a"
-        print(f"  p8={p8:.2f}: eta={estr}  ({nN} sizes, {npts} pts)")
-        plot_combined(q, gi, ge, Ns, eta, err,
-                      os.path.join(outdir, f"p{p8:.2f}.png"),
-                      float(q.min()), p8)
+        pl = plot_combined(q, gi, ge, Ns, eta, err,
+                           os.path.join(outdir, f"p{p8:.2f}.png"),
+                           float(q.min()), p8)
+        etp = pl[0] if pl else None
+        erp = pl[1] if pl else None
+        rows.append(dict(p8=p8, eta=eta, err=err, npts=npts, nN=nN,
+                         eta_plateau=etp, eta_plateau_err=erp))
+        estr = f"{eta:.3f}+/-{err:.3f}" if eta is not None else "n/a"
+        pstr = f"{etp:.3f}+/-{erp:.3f}" if etp is not None else "n/a"
+        print(f"  p8={p8:.2f}: low-q plateau eta={pstr} [PRIMARY]  "
+              f"window eta={estr}  ({nN} sizes, {npts} pts)")
     # summary eta(p8)
     csv = os.path.join(outdir, "combined_eta.csv")
     with open(csv, "w") as f:
-        f.write("p8,eta,err,nN,npts\n")
+        f.write("p8,eta_plateau,eta_plateau_err,eta_window,eta_window_err,nN,npts\n")
         for r in rows:
-            f.write(f"{r['p8']:.2f},{r['eta']:.4f},{r['err']:.4f},"
-                    f"{r['nN']},{r['npts']}\n")
+            ep = r.get("eta_plateau"); epe = r.get("eta_plateau_err")
+            f.write(f"{r['p8']:.2f},{ep if ep is None else round(ep,4)},"
+                    f"{epe if epe is None else round(epe,4)},"
+                    f"{r['eta']:.4f},{r['err']:.4f},{r['nN']},{r['npts']}\n")
     print(f"[csv] wrote {csv}")
     _plot_eta_of_p8(rows, os.path.join(outdir, "eta_vs_p8.png"))
     return rows
@@ -531,7 +582,7 @@ def _plot_eta_of_p8(rows, png):
 
 # ----------------------------------------------------------------------------
 def plot(q, Ginv, theta, qcen, eta_eff, eta_w, fitline, p8, qmin, qmax,
-         out_png, out_gp, datfile):
+         out_png, out_gp, datfile, plateau=None):
     """No angular averaging: every mode is a point (q_r, Ginv), colored by its
     polar angle so direction-dependence (anisotropy) is visible. Left panel is
     the point cloud + windowed power-law fit; right panel is the running local
@@ -579,6 +630,11 @@ plot '{datfile}' using 5:8 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
                      label=r"$\eta_{eff}(q_r)$ (sliding local fit)")
     if eta_w is not None:
         axR.axhline(eta_w, ls="--", color="C1", label=rf"windowed $\eta={eta_w:.2f}$")
+    if plateau is not None:
+        etp, erp, (qlo, qhi), _ = plateau
+        axR.axvspan(qlo, qhi, color="C2", alpha=0.15)
+        axR.axhline(etp, ls="-", color="C2", lw=2,
+                    label=rf"low-$q$ plateau $\eta={etp:.3f}\pm{erp:.3f}$")
     axR.axhline(0.0, color="0.8", lw=0.8)
     axR.axvspan(qmin, qmax, color="C1", alpha=0.12)
     axR.set_ylim(-0.5, 4.2)
@@ -625,25 +681,21 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
         qq = np.logspace(np.log10(q[mw].min()), np.log10(q[mw].max()), 60)
         fitline = (qq, np.exp(ic) * qq ** sl)
 
-    # running local exponent (sliding fit over the raw cloud) + its window mean
+    # running local exponent (sliding fit over the raw cloud) + low-q plateau
     qcen, eta_eff = running_eta(q, Ginv_pt)
-    eta_r = spread_r = None
-    if len(qcen):
-        inw = (qcen >= qmin) & (qcen <= qmax)
-        if inw.sum() >= 2:
-            eta_r = float(np.mean(eta_eff[inw]))
-            spread_r = float(np.std(eta_eff[inw]))
+    plateau = plateau_lowq(qcen, eta_eff) if len(qcen) else None
 
     if not quiet:
         print(f"file           : {datfile}")
         print(f"N, L           : {header.get('N','?')}, {header.get('L','?')}")
         print(f"p8             : {p8}")
         print(f"window         : q_r in [{qmin:.3f}, {qmax:.3f}]  ({npts} modes, unbinned)")
+        if plateau is not None:
+            etp, erp, (qlo, qhi), npl = plateau
+            print(f"low-q plateau  : {etp:.3f} +/- {erp:.3f}  eta_eff flat over "
+                  f"q_r in [{qlo:.3f},{qhi:.3f}] ({npl} pts)  [PRIMARY: q->0 exponent]")
         if eta_w is not None:
-            print(f"windowed eta   : {eta_w:.3f} +/- {err_w:.3f}  (all modes, no angular avg)  [PRIMARY]")
-        if eta_r is not None:
-            flat = "flat" if spread_r < 0.25 else "NOT flat -> eta ill-defined here"
-            print(f"running eta_eff : {eta_r:.3f}  (spread {spread_r:.3f} across window, {flat})")
+            print(f"windowed eta   : {eta_w:.3f} +/- {err_w:.3f}  (all modes in [{qmin:.3f},{qmax:.3f}]; biased by crossover if qmax high)")
         print(f"Poisson ratio  : {header.get('nu','?')} +/- {header.get('nu_err','?')}")
         conv = header.get("converged", "?")
         print(f"run            : sweeps={header.get('sweeps','?')} "
@@ -666,9 +718,10 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
     png = png or os.path.join(pdir, stem + ".png")
     gp = os.path.join(pdir, stem + ".gp")
     plot(q, Ginv_pt, theta, qcen, eta_eff, eta_w, fitline, p8, qmin, qmax,
-         png, gp, datfile)
+         png, gp, datfile, plateau=plateau)
     return dict(N=int(header.get("N", 0)), p8=p8, png=png,
-                eta_window=eta_w, eta_window_err=err_w, eta_running=eta_r)
+                eta_window=eta_w, eta_window_err=err_w,
+                eta_plateau=(plateau[0] if plateau else None))
 
 
 def main():
