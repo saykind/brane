@@ -29,7 +29,7 @@ static void check_engine(Config cfg, int nsweeps, double *max_dS,
 
     Replica rep;
     replica_alloc(&rep, &geo);
-    replica_init(&rep, &geo, &cfg, 1u);
+    replica_init(&rep, &geo, cfg.seed, 1u);
 
     double complex *h0 = NULL;
     if (moved) {

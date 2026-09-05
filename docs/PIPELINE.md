@@ -17,7 +17,6 @@ Replica-parallel Fourier Monte Carlo. Key options (`./brane -h`):
 | `eps` | adaptive stop on rel. error of Δ₂=Σ_q⟨|h_q|²⟩ (`eps=0` → fixed length) |
 | `minsweeps`, `block`, `meas`, `d0`, `seed` | convergence floor, block size, measure stride, step, RNG seed |
 | `overrelax` | over-relaxation sweeps interleaved per Metropolis sweep (`0`=off) — decorrelation, see below |
-| `warmeta` | anomalous warm-start exponent η; seed `\|h_q\|²~q^{-(4-η)}` below `q_c~p8` (`0`=harmonic `q⁻⁴`) |
 | `outdir` | base dir; engine builds the descriptive path (below) |
 | `out` | explicit output path (overrides `outdir`) |
 | `series` | write per-sweep instantaneous Δ₂ (replica 0) for τ measurement |
@@ -26,7 +25,29 @@ Defaults: `therm=300` (matches legacy), `eps=0.005`, `minsweeps=200`.
 
 **Robustness:** output is written atomically (temp+rename) and **checkpointed
 every 60 s**, so a killed run keeps its latest data. A per-block convergence
-trace is written to `<out>.trace` (sweeps, Δ₂, rel_err, wall_s).
+trace is written to `<out>.trace` (sweeps, Δ₂, rel_err, **accept**, wall_s) and
+a per-mode Metropolis acceptance map to `<out>.accept` (`q1 q2 qmag proposed
+accepted rate`).
+
+### Step size & acceptance (Tröster OFMC)
+
+The per-mode trial step is momentum-dependent,
+`d[k] = d0/q² · (1 + Y/q²)^{−0.13}` (in `geometry_make`). Since the harmonic
+amplitude is `⟨|h_q|⟩ ~ q⁻²`, the `d0/q²` factor is exactly Tröster's
+`d[k] ~ ⟨|h_k|⟩` heuristic (2013, §4: tune the step per wave vector so each mode
+has ~50% acceptance → uniform τ, no critical slowing down); the `(1+Y/q²)^{−0.13}`
+softening bends `d` toward the anomalous amplitude `q^{−(4−η)/2}` below the
+crossover.
+- *Measured (N=64, p8=0.4):* overall acceptance 49.9%, **stable across sweeps**
+  (0.497–0.510 from the first block on — it does not drift as the chain
+  thermalizes). Acceptance is **flat at 50% for q above the crossover**, but
+  drops to ~30% for the lowest-q modes (`q ≲ p8`) — the step slightly *over*-steps
+  there (our `q^{−1.74}` vs the true `q^{−1.65}`). So the momentum-dependent step
+  is close to optimal OFMC but **not fully tuned at the slowest modes** — the
+  natural next step is a warm-up phase that adapts `d[k]` per mode to hit 50%
+  (true OFMC). Tuning the *step* to 50% acceptance is a legitimate MC-efficiency
+  criterion (detailed balance holds for any step; only efficiency changes) — not
+  to be confused with tuning an *estimator* to a target η.
 
 ## Output layout & format
 
@@ -121,15 +142,12 @@ kernel (`mode_dS_energy`).
   critical-slowing-down regime (large N, large τ); **not yet demonstrated to win
   on wall-clock** — needs a large-N test.
 
-**Anomalous warm start** (`warmeta=η`). Seeds `|h_q|² = q_c^{−η} q^{−(4−η)}`
-below the crossover `q_c≈p8` (matched continuously to harmonic `q⁻⁴` above),
-instead of pure harmonic `q⁻⁴`. `η≈0.7` is the anomalous exponent.
-- *Effect (ensemble-averaged over 12 seeds, N=40):* the anomalous start begins
-  at ⟨Δ₂⟩ ≈ +46% above equilibrium vs +100% for the harmonic start, and reaches
-  equilibrium a few sweeps sooner (+5% vs +11% by sweep 5). **Caveat:** in this
-  regime thermalization is already only ~10 sweeps (≪ the conservative
-  `therm=300`), so the absolute saving is small; it matters more if `therm` is
-  tuned down or at large N where thermalization is slower.
+**Anomalous warm start** — *tried and removed.* Seeding `|h_q|² ~ q^{−(4−η)}`
+below `q_c≈p8` instead of harmonic `q⁻⁴` began closer to equilibrium (ensemble
+Δ₂ excess +48% vs +158% at N=64) and shaved a few sweeps off thermalization, but
+the transient is only ~10–15 sweeps for either start (≪ the conservative
+`therm=300`), so it saved ~10 sweeps at most. Not worth the extra code path;
+reverted to cold (harmonic) start only.
 
 ## Open items / TODO
 

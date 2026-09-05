@@ -41,9 +41,8 @@ typedef struct {
     double   eps;        /* target relative stat. error on Delta2; <=0 off */
     long     min_sweeps; /* minimum measurement sweeps before stopping     */
     int      block;      /* measurement sweeps between convergence checks   */
-    /* ---- decorrelation / warm start ---------------------------------- */
+    /* ---- decorrelation ----------------------------------------------- */
     int      overrelax;  /* over-relaxation sweeps per Metropolis sweep (0=off)*/
-    double   warm_eta;   /* anomalous warm start exponent eta; <=0 = harmonic */
 } Config;
 
 /* Derived, read-only geometry shared by all replicas. */
@@ -71,6 +70,10 @@ typedef struct {
     double sum_Kx, sum_Ky, sum_KxKx, sum_KxKy;
     /* Metropolis bookkeeping                                              */
     long   proposed, accepted;
+    /* Per-mode Metropolis bookkeeping [L*L] (diagnostic: acceptance vs |q|,
+     * i.e. is the momentum-dependent step tuned to ~uniform acceptance a la
+     * Troster 2013 OFMC). NULL unless allocated.                            */
+    long  *prop_k, *acc_k;
     /* Over-relaxation bookkeeping                                         */
     long   or_proposed, or_accepted;
     pcg32  rng;
@@ -82,7 +85,7 @@ void     geometry_free(Geometry *geo);
 
 void     replica_alloc(Replica *rep, const Geometry *geo);
 void     replica_free(Replica *rep);
-void     replica_init(Replica *rep, const Geometry *geo, const Config *cfg, uint64_t stream);
+void     replica_init(Replica *rep, const Geometry *geo, uint64_t seed, uint64_t stream);
 
 /* One full sweep = l*l attempted single-mode Metropolis updates.         */
 void     replica_sweep(Replica *rep, const Geometry *geo, const Config *cfg);

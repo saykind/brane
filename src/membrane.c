@@ -85,43 +85,33 @@ void replica_alloc(Replica *rep, const Geometry *geo) {
     rep->S  = calloc((size_t)L * L, sizeof(double complex));
     rep->dS = calloc((size_t)L * L, sizeof(double complex));
     rep->g  = calloc((size_t)L * L, sizeof(double));
+    rep->prop_k = calloc((size_t)L * L, sizeof(long));
+    rep->acc_k  = calloc((size_t)L * L, sizeof(long));
 }
 
 void replica_free(Replica *rep) {
     free(rep->h); free(rep->S); free(rep->dS); free(rep->g);
+    free(rep->prop_k); free(rep->acc_k);
     rep->h = NULL; rep->S = NULL; rep->dS = NULL; rep->g = NULL;
+    rep->prop_k = rep->acc_k = NULL;
 }
 
-void replica_init(Replica *rep, const Geometry *geo, const Config *cfg, uint64_t stream) {
+void replica_init(Replica *rep, const Geometry *geo, uint64_t seed, uint64_t stream) {
     int L = geo->L;
-    pcg32_seed(&rep->rng, cfg->seed, stream);
-    /* Initial ensemble. Harmonic (default): h_q = 1/q^2 so |h_q|^2 = 1/q^4.
-     * Anomalous warm start (warm_eta>0): below the crossover q_c ~ p8 the true
-     * spectrum is |h_q|^2 ~ q^-(4-eta) rather than q^-4, so seeding with that
-     * shape shortens thermalization. We match the harmonic branch continuously
-     * at q_c: |h_q|^2 = q_c^-eta * q^-(4-eta) (equals q_c^-4 = harmonic at q_c),
-     * i.e. amplitude |h_q| = q_c^(-eta/2) * (q^2)^(-(4-eta)/4). Phases are real
-     * (thermalization randomizes them); q^2 uses the same lattice dispersion Q. */
-    double eta = cfg->warm_eta;
-    double qc2 = cfg->p8 * cfg->p8;                 /* crossover q_c^2 ~ p8^2   */
+    pcg32_seed(&rep->rng, seed, stream);
+    /* Start from the harmonic ground-state ensemble h_q = 1/q^2 (real). */
     for (int q1 = 0; q1 < L; q1++)
         for (int q2 = 0; q2 < L; q2++) {
             int i = IDX(q1, q2, L);
-            if (q1 == 0 && q2 == 0) {
-                rep->h[i] = 1.0 / (geo->a * geo->a);
-            } else if (eta > 0.0 && geo->Q[i] < qc2) {
-                double amp = pow(qc2, -eta / 4.0) *          /* q_c^(-eta/2) */
-                             pow(geo->Q[i], -(4.0 - eta) / 4.0);
-                rep->h[i] = amp;
-            } else {
-                rep->h[i] = 1.0 / geo->Q[i];
-            }
+            rep->h[i] = (q1 == 0 && q2 == 0) ? (1.0 / (geo->a * geo->a))
+                                             : (1.0 / geo->Q[i]);
             rep->g[i] = 0.0;
         }
     rep->nmeas = 0;
     rep->sum_Kx = rep->sum_Ky = rep->sum_KxKx = rep->sum_KxKy = 0.0;
     rep->proposed = rep->accepted = 0;
     rep->or_proposed = rep->or_accepted = 0;
+    for (int i = 0; i < L * L; i++) { rep->prop_k[i] = 0; rep->acc_k[i] = 0; }
     calcS(rep, geo);
 }
 
@@ -235,9 +225,12 @@ static void metropolis_step(Replica *rep, const Geometry *geo, const Config *cfg
     double complex u = geo->dstep[IDX(k1, k2, L)] * z;
 
     double w = mode_dS_energy(rep, geo, cfg, k1, k2, u, par);
+    int ki = IDX(k1, k2, L);
     rep->proposed++;
+    rep->prop_k[ki]++;
     if (w > log(pcg32_double(&rep->rng) + 1e-300)) {
         rep->accepted++;
+        rep->acc_k[ki]++;
         apply_shift(rep, geo, cfg, k1, k2, u, par);
     }
 }

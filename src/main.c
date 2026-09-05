@@ -52,7 +52,6 @@ static Config default_config(void) {
     c.min_sweeps = 200;  /* don't stop before this many measurement sweeps   */
     c.block = 20;        /* sweeps between convergence checks                */
     c.overrelax = 0;     /* over-relaxation sweeps per Metropolis sweep      */
-    c.warm_eta = 0.0;    /* anomalous warm start exponent (0 = harmonic)     */
     return c;
 }
 
@@ -72,7 +71,6 @@ static void usage(const Config *d) {
     printf("  minsweeps=<int>   min sweeps before stopping       (%ld)\n", d->min_sweeps);
     printf("  block=<int>       sweeps between convergence checks(%d)\n", d->block);
     printf("  overrelax=<int>   over-relaxation sweeps per MC sweep (%d)\n", d->overrelax);
-    printf("  warmeta=<float>   anomalous warm-start exponent; 0=harmonic (%.2f)\n", d->warm_eta);
     printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
@@ -110,8 +108,7 @@ static void write_result_file(const char *outpath, const Config *cfg,
             cfg->eps, res->rel_err, converged);
     fprintf(f, "# samples=%ld accept_rate=%.4f wall_s=%.2f nu=%.6f nu_err=%.6f\n",
             res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
-    fprintf(f, "# overrelax=%d or_accept=%.4f warm_eta=%.3f\n",
-            cfg->overrelax, or_rate, cfg->warm_eta);
+    fprintf(f, "# overrelax=%d or_accept=%.4f\n", cfg->overrelax, or_rate);
     fprintf(f, "# engine_sha=%s\n", GIT_SHA);
     fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
     for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
@@ -137,6 +134,40 @@ static double or_accept_rate(const Replica *reps, int n) {
     return prop ? (double)acc / prop : 0.0;
 }
 
+/* Sum Metropolis proposed/accepted counts across replicas. */
+static void metropolis_counts(const Replica *reps, int n, long *prop, long *acc) {
+    long p = 0, a = 0;
+    for (int r = 0; r < n; r++) { p += reps[r].proposed; a += reps[r].accepted; }
+    *prop = p; *acc = a;
+}
+
+/* Write the per-mode Metropolis acceptance to <outpath>.accept: one row per
+ * mode (q1 q2 qmag proposed accepted rate), summed across replicas. This lets
+ * the analysis check whether the momentum-dependent step keeps acceptance
+ * ~uniform across |q| (Troster 2013 OFMC) or whether it varies with q (which
+ * would signal residual critical slowing down). */
+static void write_accept_file(const char *outpath, const Config *cfg,
+                              const Geometry *geo, const Replica *reps, int L) {
+    char path[620];
+    snprintf(path, sizeof path, "%s.accept", outpath);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "# per-mode Metropolis acceptance  N=%d p8=%.4f nt=%d\n",
+            cfg->N, cfg->p8, cfg->nthreads);
+    fprintf(f, "# q1 q2 qmag proposed accepted rate\n");
+    for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
+        for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {
+            if (q1 == 0 && q2 == 0) continue;
+            int i1 = geo->wrap[q1 + L], i2 = geo->wrap[q2 + L], i = i1 * L + i2;
+            long p = 0, a = 0;
+            for (int r = 0; r < cfg->nthreads; r++) { p += reps[r].prop_k[i]; a += reps[r].acc_k[i]; }
+            if (p == 0) continue;
+            double qx = geo->a * q1, qy = geo->a * q2, qm = sqrt(qx * qx + qy * qy);
+            fprintf(f, "%d\t%d\t%.8f\t%ld\t%ld\t%.6f\n", q1, q2, qm, p, a, (double)a / p);
+        }
+    fclose(f);
+}
+
 int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
@@ -159,7 +190,6 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "minsweeps=%ld", &cfg.min_sweeps) == 1) continue;
         if (sscanf(argv[i], "block=%d", &cfg.block) == 1) continue;
         if (sscanf(argv[i], "overrelax=%d", &cfg.overrelax) == 1) continue;
-        if (sscanf(argv[i], "warmeta=%lf", &cfg.warm_eta) == 1) continue;
         if (sscanf(argv[i], "meas=%d", &cfg.meas_every) == 1) continue;
         if (sscanf(argv[i], "d0=%lf", &cfg.d0) == 1) continue;
         if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
@@ -184,8 +214,8 @@ int main(int argc, char *argv[]) {
            cfg.N, L, cfg.n, cfg.p8, cfg.nthreads, cfg.inner, cfg.nthreads * cfg.inner);
     printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
            cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
-    if (cfg.overrelax > 0 || cfg.warm_eta > 0)
-        printf("       overrelax=%d warm_eta=%.3f\n", cfg.overrelax, cfg.warm_eta);
+    if (cfg.overrelax > 0)
+        printf("       overrelax=%d\n", cfg.overrelax);
 
     /* Resolve the output path and create its directory up front, so per-block
      * checkpoints during the run can write to it. Descriptive layout keeps
@@ -222,7 +252,7 @@ int main(int argc, char *argv[]) {
         int r = omp_get_thread_num();
         Replica *rep = &reps[r];
         replica_alloc(rep, &geo);
-        replica_init(rep, &geo, &cfg, (uint64_t)(r + 1));
+        replica_init(rep, &geo, cfg.seed, (uint64_t)(r + 1));
         for (long s = 0; s < cfg.therm; s++)
             replica_sweep(rep, &geo, &cfg);
     }
@@ -247,9 +277,15 @@ int main(int argc, char *argv[]) {
     if (trace) {
         fprintf(trace, "# convergence trace: N=%d p8=%.4f nt=%d it=%d therm=%ld\n",
                 cfg.N, cfg.p8, cfg.nthreads, cfg.inner, cfg.therm);
-        fprintf(trace, "# sweeps\tDelta2\trel_err\twall_s\n");
+        fprintf(trace, "# sweeps\tDelta2\trel_err\taccept\twall_s\n");
         fflush(trace);
     }
+
+    /* Track cumulative Metropolis counts so each block's acceptance (the rate
+     * over just that block's sweeps) can be logged -- shows whether acceptance
+     * drifts as the chain thermalizes. */
+    long prev_prop = 0, prev_acc = 0;
+    metropolis_counts(reps, cfg.nthreads, &prev_prop, &prev_acc);
 
     /* Optional per-sweep instantaneous Delta2 series (replica 0) for tau. */
     double *ts = series[0] ? malloc((size_t)cfg.sweeps * sizeof(double)) : NULL;
@@ -269,9 +305,12 @@ int main(int argc, char *argv[]) {
         done += todo;
         rel = delta2_rel_error(reps, cfg.nthreads, &geo);
         double d2m = delta2_mean(reps, cfg.nthreads, &geo);
+        long cp, ca; metropolis_counts(reps, cfg.nthreads, &cp, &ca);
+        double acc_block = (cp > prev_prop) ? (double)(ca - prev_acc) / (cp - prev_prop) : 0.0;
+        prev_prop = cp; prev_acc = ca;
         if (trace) {
-            fprintf(trace, "%ld\t%.8e\t%.6f\t%.2f\n",
-                    done, d2m, rel, omp_get_wtime() - t0);
+            fprintf(trace, "%ld\t%.8e\t%.6f\t%.4f\t%.2f\n",
+                    done, d2m, rel, acc_block, omp_get_wtime() - t0);
             fflush(trace);
         }
         if (cfg.verbose)
@@ -329,6 +368,7 @@ int main(int argc, char *argv[]) {
     write_result_file(outpath, &cfg, &geo, &res, L, done, converged, elapsed,
                       or_accept_rate(reps, cfg.nthreads));
     printf("wrote %s\n", outpath);
+    write_accept_file(outpath, &cfg, &geo, reps, L);
 
     for (int r = 0; r < cfg.nthreads; r++) replica_free(&reps[r]);
     free(reps);
