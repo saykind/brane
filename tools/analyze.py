@@ -31,9 +31,9 @@ Only numpy is required. matplotlib is used if present (gnuplot fallback else).
 
 Usage
 -----
-    python3 tools/analyze.py data/N60/p0.40/<run>.dat
-    python3 tools/analyze.py --all 'data/N*/p*/*/*.dat'
-    python3 tools/analyze.py --combined 'example_data/N=*.dat'
+    uv run tools/analyze.py data/N60/p0.40/<run>.dat
+    uv run tools/analyze.py --all 'data/N*/p*/*/*.dat'
+    uv run tools/analyze.py --combined 'example_data/N=*.dat'
 """
 import argparse
 import os
@@ -307,7 +307,7 @@ def plot_combined(q, gi, ge, Ns, eta, err, png, wlo, whi, coupling=None):
         axR.axhline(etp, ls="-", color="C2", lw=2,
                     label=rf"low-$q$ plateau $\eta={etp:.3f}\pm{erp:.3f}$")
     axR.axhline(0.0, color="0.8", lw=0.8)
-    axR.set_ylim(-0.5, 4.2)
+    axR.set_ylim(0, 2)
     axR.set_xlabel(r"$q_r$"); axR.set_ylabel(r"$\eta_{eff}=4-d\ln G^{-1}/d\ln q$")
     axR.set_title("Running exponent + low-$q$ plateau")
     axR.legend(frameon=False, fontsize=8); axR.grid(True, which="both", alpha=0.3)
@@ -441,7 +441,7 @@ plot '{datfile}' using 5:8 pt 7 ps 0.3 lc rgb '#cccccc' t 'all modes', \\
                     label=rf"low-$q$ plateau $\eta={etp:.3f}\pm{erp:.3f}$")
     axR.axhline(0.0, color="0.8", lw=0.8)
     axR.axvspan(qmin, qmax, color="C1", alpha=0.12)
-    axR.set_ylim(-0.5, 4.2)
+    axR.set_ylim(0, 2)
     axR.set_xlabel(r"$q_r$"); axR.set_ylabel(r"$\eta_{eff}=4-d\ln G^{-1}/d\ln q$")
     axR.set_title("Running exponent (no angular averaging)")
     axR.legend(frameon=False, fontsize=8); axR.grid(True, which="both", alpha=0.3)
@@ -501,9 +501,8 @@ def analyze_file(datfile, qmin_arg=None, qmax_arg=None, nbins=60, quv=1.0,
         if eta_w is not None:
             print(f"windowed eta   : {eta_w:.3f} +/- {err_w:.3f}  (all modes in [{qmin:.3f},{qmax:.3f}]; biased by crossover if qmax high)")
         print(f"Poisson ratio  : {header.get('nu','?')} +/- {header.get('nu_err','?')}")
-        conv = header.get("converged", "?")
         print(f"run            : sweeps={header.get('sweeps','?')} "
-              f"Delta2 rel.err={header.get('rel_err','?')} converged={conv}")
+              f"Delta2 rel.err={header.get('rel_err','?')}")
 
     # Mirror the input path under plots/, keyed by the data filename stem so
     # multiple configs (or example_data files) never collide:

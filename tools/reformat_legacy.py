@@ -70,9 +70,9 @@ def main():
         f.write("# Fourier MC membrane (legacy example_data, reformatted)\n")
         f.write(f"# N={N} L={L} n={N} p8={p8:.4f} N8={N8} Y={Y:.6f} d0={a.d0:.4f} seed=NA\n")
         f.write("# nt=1 it=NA cores=NA\n")   # legacy = single chain (intra-chain threads unknown)
-        f.write(f"# therm=NA sweeps={samples} sweeps_cap=NA min_sweeps=NA block=NA "
+        f.write(f"# therm=NA sweeps={samples} sweeps_cap=NA block=NA "
                 "meas_every=1 steps_per_sweep=NA\n")
-        f.write("# eps=NA rel_err=NA converged=NA\n")
+        f.write("# rel_err=NA\n")
         nu_s = f"{nu:.6f}" if np.isfinite(nu) else "NA"
         f.write(f"# samples={samples} accept_rate=NA wall_s=NA nu={nu_s} nu_err=NA\n")
         f.write("# engine_sha=legacy source=example_data Gerr=NA(single-chain,no-error-estimate)\n")

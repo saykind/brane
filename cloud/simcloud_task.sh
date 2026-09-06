@@ -14,9 +14,7 @@ set -euo pipefail
 NS="${NS:-32,40,48,56,64,80,96,120}"           # lattice sizes (L=2N+1)
 P8S="${P8S:-0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}"  # couplings (q8~p8)
 THERM="${THERM:-300}"                           # thermalization sweeps (legacy MTH=300)
-SWEEPS="${SWEEPS:-4000}"                         # measurement-sweep cap per cell
-EPS="${EPS:-0.005}"                             # Delta2 rel-error convergence target
-MINSW="${MINSW:-100}"                           # floor before convergence can trip
+SWEEPS="${SWEEPS:-4000}"                         # measurement sweeps per cell (fixed length)
 OUTDIR="${OUTDIR:-/out}"                         # collected via --output-to-bundle
 NT="${NT:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)}"  # replicas = cores
 IT="${IT:-1}"                                    # inner threads/replica (large-N: nt=1 it=cores)
@@ -46,5 +44,5 @@ P="${PARR[$(( i % nP ))]}"
 #   $OUTDIR/N<N>/p<p8>/<stop>/therm..._nt..._it..._seed....dat
 echo ">>> batch index $i -> N=$N p8=$P nt=$NT it=$IT on $(hostname) ($(nproc) cores)"
 ./brane "N=$N" "p8=$P" "nt=$NT" "it=$IT" "therm=$THERM" "sweeps=$SWEEPS" \
-        "eps=$EPS" "minsweeps=$MINSW" "outdir=$OUTDIR"
+        "outdir=$OUTDIR"
 echo ">>> wrote under $OUTDIR/N$N/p$P/"

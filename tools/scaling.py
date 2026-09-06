@@ -19,7 +19,7 @@ import sys
 def run_one(binary, N, p8, nt, sweeps):
     out = subprocess.run(
         [binary, f"N={N}", f"p8={p8}", f"nt={nt}",
-         "therm=0", f"sweeps={sweeps}", "eps=0", "out=data/scaling.dat"],
+         "therm=0", f"sweeps={sweeps}", "out=data/scaling.dat"],
         capture_output=True, text=True, check=True).stdout
     m = re.search(r"time = ([\d.]+) s", out)
     if not m:

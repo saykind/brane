@@ -37,10 +37,8 @@ typedef struct {
     double   d0;         /* base Metropolis step size                      */
     uint64_t seed;       /* base RNG seed (reproducibility)                */
     int      verbose;    /* progress reporting                             */
-    /* ---- convergence control (adaptive stopping) --------------------- */
-    double   eps;        /* target relative stat. error on Delta2; <=0 off */
-    long     min_sweeps; /* minimum measurement sweeps before stopping     */
-    int      block;      /* measurement sweeps between convergence checks   */
+    /* ---- block size (checkpoint / trace / progress cadence) ---------- */
+    int      block;      /* measurement sweeps per block                    */
     /* ---- decorrelation ----------------------------------------------- */
     int      overrelax;  /* over-relaxation sweeps per Metropolis sweep (0=off)*/
 } Config;
@@ -106,8 +104,7 @@ typedef struct {
     double  poisson_err; /* standard error of nu across replicas           */
     double  accept_rate;
     long    sweeps_done; /* measurement sweeps actually run (per replica)   */
-    double  rel_err;     /* achieved relative stat. error on Delta2         */
-    int     converged;   /* 1 if the eps target was reached                 */
+    double  rel_err;     /* achieved relative stat. error on Delta2 (diag.) */
 } Result;
 
 /* Relative statistical error of the mean-square amplitude Delta2 =

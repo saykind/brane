@@ -37,7 +37,7 @@ TOOLCHAIN="${TOOLCHAIN:-1}"                      # 1=ship build-essential bundle
 NS="${NS:-32,40,48,56,64,80,96,120}"
 P8S="${P8S:-0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0}"
 export NS P8S
-export THERM="${THERM:-300}" SWEEPS="${SWEEPS:-4000}" EPS="${EPS:-0.005}" MINSW="${MINSW:-100}"
+export THERM="${THERM:-300}" SWEEPS="${SWEEPS:-4000}"
 # replicas (NT) x inner-threads (IT) per cell. Default: NT=CPUS replicas, IT=1
 # (statistics). For large-N reach set NT=1 IT=$CPUS (fewer replicas, one fast
 # chain -- intra-chain parallelism, engine 'it=' knob, wins for N>=~70).
@@ -53,7 +53,7 @@ COUNT=$(( ${#NARR[@]} * ${#PARR[@]} ))
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 echo "=== brane -> Simcloud ($CLUSTER, $SMI) ==="
 echo "grid: ${#NARR[@]} N x ${#PARR[@]} p8 = $COUNT cells; $CPUS cpus/cell = NT=$NT replicas x IT=$IT inner"
-echo "params: therm=$THERM sweeps=$SWEEPS eps=$EPS minsweeps=$MINSW timeout=$TIMEOUT"
+echo "params: therm=$THERM sweeps=$SWEEPS timeout=$TIMEOUT"
 echo "concurrent CPU demand if all run at once: $(( COUNT * CPUS )) (check your quota)"
 [ -n "$OWNER" ] && echo "owner (quota): $OWNER"
 
@@ -88,7 +88,7 @@ fi
 # have no spaces, so this is safe). Each job derives its cell from $SC_BATCH_ID.
 owner_flag=(); [ -n "$OWNER" ] && owner_flag=(--owner "$OWNER")
 vpc_flag=();   [ -n "$NET" ]   && vpc_flag=(--denali-vpc "ipv4_network_id=$NET")
-envprefix="NS=$NS P8S=$P8S THERM=$THERM SWEEPS=$SWEEPS EPS=$EPS MINSW=$MINSW NT=$NT IT=$IT OUTDIR=/out"
+envprefix="NS=$NS P8S=$P8S THERM=$THERM SWEEPS=$SWEEPS NT=$NT IT=$IT OUTDIR=/out"
 echo "--- posting batch of $COUNT jobs ---"
 batch=$(simcloud -q batch post \
   --count "$COUNT" \

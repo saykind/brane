@@ -64,10 +64,8 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   nt=<int>       independent replicas / threads     (default min(cores,12))
   it=<int>       threads per replica (large-N reach) (default 1)
   therm=<int>    thermalization sweeps per replica  (default 300)
-  sweeps=<int>   MAX measurement sweeps (cap)       (default 2000)
-  eps=<float>    target rel. stat. error on Delta2  (default 0.005; 0=off)
-  minsweeps=<int> min sweeps before stopping        (default 200)
-  block=<int>    sweeps between convergence checks   (default 20)
+  sweeps=<int>   measurement sweeps (fixed length)  (default 2000)
+  block=<int>    sweeps per block (checkpoint/trace) (default 20)
   overrelax=<int> over-relaxation sweeps per MC sweep (default 0=off)
   meas=<int>     measure every M sweeps             (default 1)
   d0=<float>     base Metropolis step size          (default 2.6)
@@ -86,20 +84,20 @@ reproducible. `it>1` (intra-chain parallelism) helps only at large `N` on
 macOS/libomp and regresses on Linux — keep `it=1` on the cloud (see
 [cloud/SIMCLOUD.md](cloud/SIMCLOUD.md)).
 
-### Convergence and error bars
+### Error bars
 
-The measurement phase runs in **blocks** and stops when the run has genuinely
-converged, not after a fixed count. After each `block` sweeps it estimates the
-**relative statistical error of `Δ² = Σ_q⟨|h_q|²⟩`** from the spread across the
-independent replicas, and stops once that error drops below `eps` (default 0.5 %),
-bounded by `minsweeps … sweeps`. Set `eps=0` to force a fixed `sweeps` run.
+A run is **fixed-length**: it does `therm` thermalization sweeps then `sweeps`
+measurement sweeps. Because the replicas are independent, every observable gets a
+real statistical error: `G(q)` is reported with its **standard error across
+replicas** (`Gerr` column), the Poisson ratio as `ν ± SE`, and `analyze.py`'s
+windowed-slope η error is the **inverse-variance-weighted** propagation of those
+`G` errors (not just fit scatter).
 
-Because the replicas are independent, every observable gets a real statistical
-error: `G(q)` is reported with its **standard error across replicas** (`Gerr`
-column), the Poisson ratio as `ν ± SE`, and `analyze.py`'s windowed-slope η
-error is the **inverse-variance-weighted** propagation of those `G` errors
-(not just fit scatter). The run's achieved `Δ²` error and a `converged` flag
-are written into the `.dat` header.
+As a diagnostic, the engine also tracks the **relative statistical error of
+`Δ² = Σ_q⟨|h_q|²⟩`** (the total mean-square amplitude) across replicas and writes
+it to the `.dat` header (`rel_err`) and to a per-block `<out>.trace` — so you can
+see the achieved error and judge whether `sweeps` was enough. Raise `sweeps` to
+shrink it (error `∼ 1/√(nt·sweeps)`).
 
 ### Reaching the anomalous regime on a small lattice
 
@@ -185,8 +183,7 @@ By default the engine writes a descriptive path so different configs never
 collide (`out=` overrides it with an explicit filename):
 
 ```
-data/N<N>/p<p8>/<stop>/therm<T>_nt<NT>_it<IT>_seed<S>.dat
-                 └ stop = eps<eps> (adaptive) | fixed<sweeps> (fixed length)
+data/N<N>/p<p8>/fixed<sweeps>/therm<T>_nt<NT>_it<IT>_seed<S>.dat
 ```
 
 Each `.dat` is a text table (one row per non-zero mode) with a multi-line
@@ -196,8 +193,8 @@ Each `.dat` is a text table (one row per non-zero mode) with a multi-line
 # Fourier MC membrane
 # N=36 L=73 n=36 p8=0.4000 N8=4 Y=0.335103 d0=2.6000 seed=12345
 # nt=12 it=1 cores=12
-# therm=300 sweeps=120 sweeps_cap=2000 min_sweeps=200 block=20 meas_every=1 steps_per_sweep=5329
-# eps=0.005000 rel_err=0.009000 converged=1
+# therm=300 sweeps=120 sweeps_cap=120 block=20 meas_every=1 steps_per_sweep=5329
+# rel_err=0.009000
 # samples=1440 accept_rate=0.4987 wall_s=52.30 nu=0.036000 nu_err=0.020000
 # overrelax=0 or_accept=0.0000
 # engine_sha=<git>

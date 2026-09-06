@@ -13,19 +13,20 @@ Replica-parallel Fourier Monte Carlo. Key options (`./brane -h`):
 | `N`, `p8`, `n` | half lattice size (L=2N+1), coupling, move-zone |
 | `nt` | replicas (independent chains, averaged) — statistics |
 | `it` | inner threads per replica (intra-chain) — large-N latency; **helps only on macOS/libomp, regresses on Linux**, keep `it=1` on the cloud |
-| `therm`, `sweeps` | thermalization + max measurement sweeps |
-| `eps` | adaptive stop on rel. error of Δ₂=Σ_q⟨|h_q|²⟩ (`eps=0` → fixed length) |
-| `minsweeps`, `block`, `meas`, `d0`, `seed` | convergence floor, block size, measure stride, step, RNG seed |
+| `therm`, `sweeps` | thermalization + measurement sweeps (fixed length) |
+| `block`, `meas`, `d0`, `seed` | block size (checkpoint/trace cadence), measure stride, step, RNG seed |
 | `overrelax` | over-relaxation sweeps interleaved per Metropolis sweep (`0`=off) — decorrelation, see below |
 | `outdir` | base dir; engine builds the descriptive path (below) |
 | `out` | explicit output path (overrides `outdir`) |
 | `series` | write per-sweep instantaneous Δ₂ (replica 0) for τ measurement |
 | `qseries` | write per-sweep \|h_q\|² along the qx-axis ray (replica 0) for per-mode τ(q) |
 
-Defaults: `therm=300` (matches legacy), `eps=0.005`, `minsweeps=200`.
+Defaults: `therm=300` (matches legacy), `sweeps=2000`. Runs are **fixed-length**;
+the Δ₂ relative error across replicas is tracked as a diagnostic (`rel_err` in the
+header + `<out>.trace`), not used to stop early.
 
 **Robustness:** output is written atomically (temp+rename) and **checkpointed
-every 60 s**, so a killed run keeps its latest data. A per-block convergence
+every 60 s**, so a killed run keeps its latest data. A per-block progress
 trace is written to `<out>.trace` (sweeps, Δ₂, rel_err, **accept**, wall_s) and
 a per-mode Metropolis acceptance map to `<out>.accept` (`q1 q2 qmag proposed
 accepted rate`).
@@ -83,8 +84,7 @@ climb at low q.
 Descriptive paths keep different configs from overwriting each other:
 
 ```
-data/N<N>/p<p8>/<stop>/therm<T>_nt<NT>_it<IT>_seed<S>.dat
-                 └ stop = eps<eps> (adaptive) | fixed<sweeps> (fixed length)
+data/N<N>/p<p8>/fixed<sweeps>/therm<T>_nt<NT>_it<IT>_seed<S>.dat
 ```
 
 Each `.dat` has a `key=value` metadata header (parsed by `analyze.py`) then
@@ -93,8 +93,8 @@ columns `q1 q2 qx qy qmag G Gerr Ginv`:
 ```
 # N=100 L=201 n=100 p8=0.4000 N8=12 Y=... d0=2.60 seed=12345
 # nt=16 it=1 cores=16
-# therm=300 sweeps=800 sweeps_cap=800 min_sweeps=200 block=20 meas_every=1 steps_per_sweep=...
-# eps=0.005 rel_err=0.0034 converged=0
+# therm=300 sweeps=800 sweeps_cap=800 block=20 meas_every=1 steps_per_sweep=...
+# rel_err=0.0034
 # samples=12800 accept_rate=0.499 wall_s=... nu=0.048 nu_err=0.018
 # overrelax=0 or_accept=0.0000
 # engine_sha=<git>
@@ -148,7 +148,8 @@ From a single N=100 study (`tools/study_convergence.py`):
   by the noisy 4-replica error *estimator* — **not confirmed**. A proper
   multi-seed study (spread of the observable across independent seeds) is needed.
 - Thermalization (running-mean Δ₂) settles by ~150 sweeps → `therm=300` is safe.
-- `eps=0.005` reaches in ~500–800 sweeps at nt=16 — a reasonable production goal.
+- Δ₂ `rel_err` drops to ~0.005 by ~500–800 sweeps at nt=16 — a reasonable
+  production length for `sweeps`.
 
 ## Decorrelation & warm start (implemented)
 
@@ -190,4 +191,4 @@ reverted to cold (harmonic) start only.
   finite-size shelf or the high-q crossover approach. Needs a principled,
   crossover-aware estimator. Do **not** tune it to reproduce an expected η.
 - **Proper error-vs-samples study** — many independent seeds, per-observable
-  spread, to actually establish the scaling law and finalize eps/therm.
+  spread, to actually establish the scaling law and finalize therm/sweeps.

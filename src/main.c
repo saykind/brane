@@ -85,14 +85,12 @@ static Config default_config(void) {
     c.nthreads = mx < 12 ? mx : 12;
     c.inner = 1;         /* threads per replica (intra-chain); 1 = replica-only */
     c.therm = 300;       /* thermalization sweeps (matches legacy MTH=300)   */
-    c.sweeps = 2000;     /* max measurement sweeps (cap for adaptive run)   */
+    c.sweeps = 2000;     /* measurement sweeps (fixed-length run)            */
     c.meas_every = 1;
     c.d0 = 2.6;
     c.seed = 12345u;
     c.verbose = 0;
-    c.eps = 0.005;       /* target rel. stat. error on Delta2 (0 disables)  */
-    c.min_sweeps = 200;  /* don't stop before this many measurement sweeps   */
-    c.block = 20;        /* sweeps between convergence checks                */
+    c.block = 20;        /* sweeps per block (checkpoint / trace cadence)    */
     c.overrelax = 0;     /* over-relaxation sweeps per Metropolis sweep      */
     return c;
 }
@@ -108,18 +106,15 @@ static void usage(const Config *d) {
     printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);
     printf("  it=<int>          threads per replica (large-N)     (%d)\n", d->inner);
     printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
-    printf("  sweeps=<int>      MAX measurement sweeps (cap)     (%ld)\n", d->sweeps);
-    printf("  eps=<float>       target rel. error on Delta2; 0=off (%.3f)\n", d->eps);
-    printf("  minsweeps=<int>   min sweeps before stopping       (%ld)\n", d->min_sweeps);
-    printf("  block=<int>       sweeps between convergence checks(%d)\n", d->block);
+    printf("  sweeps=<int>      measurement sweeps (fixed length) (%ld)\n", d->sweeps);
+    printf("  block=<int>       sweeps per block (checkpoint/trace)(%d)\n", d->block);
     printf("  overrelax=<int>   over-relaxation sweeps per MC sweep (%d)\n", d->overrelax);
     printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
     printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
     printf("  seed=<int>        base RNG seed                    (%llu)\n",
            (unsigned long long)d->seed);
     printf("  out=<path>        explicit output .dat path (overrides outdir layout)\n");
-    printf("  outdir=<dir>      base dir; writes <dir>/N<N>/p<p8>/<stop>/therm..._nt..._it..._seed....dat\n");
-    printf("                    <stop> = eps<eps> (adaptive) or fixed<sweeps> (eps=0)\n");
+    printf("  outdir=<dir>      base dir; writes <dir>/N<N>/p<p8>/fixed<sweeps>/therm..._nt..._it..._seed....dat\n");
 }
 
 /* Write G(q)/G^{-1}(q) to outpath atomically (temp file + rename), so a run
@@ -129,7 +124,7 @@ static void usage(const Config *d) {
  * key=value tokens (tools/analyze.py reads any k=v it finds). */
 static void write_result_file(const char *outpath, const Config *cfg,
                               const Geometry *geo, const Result *res,
-                              int L, long done, int converged, double wall_s,
+                              int L, long done, double wall_s,
                               double or_rate) {
     char tmp[600];
     snprintf(tmp, sizeof(tmp), "%s.tmp", outpath);
@@ -142,12 +137,11 @@ static void write_result_file(const char *outpath, const Config *cfg,
             (unsigned long long)cfg->seed);
     fprintf(f, "# nt=%d it=%d cores=%d\n",
             cfg->nthreads, cfg->inner, cfg->nthreads * cfg->inner);
-    fprintf(f, "# therm=%ld sweeps=%ld sweeps_cap=%ld min_sweeps=%ld block=%d meas_every=%d "
+    fprintf(f, "# therm=%ld sweeps=%ld sweeps_cap=%ld block=%d meas_every=%d "
                "steps_per_sweep=%ld\n",
-            cfg->therm, done, cfg->sweeps, cfg->min_sweeps, cfg->block,
+            cfg->therm, done, cfg->sweeps, cfg->block,
             cfg->meas_every, steps_per_sweep);
-    fprintf(f, "# eps=%.6f rel_err=%.6f converged=%d\n",
-            cfg->eps, res->rel_err, converged);
+    fprintf(f, "# rel_err=%.6f\n", res->rel_err);
     fprintf(f, "# samples=%ld accept_rate=%.4f wall_s=%.2f nu=%.6f nu_err=%.6f\n",
             res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
     fprintf(f, "# overrelax=%d or_accept=%.4f\n", cfg->overrelax, or_rate);
@@ -215,6 +209,27 @@ static void write_accept_file(const char *outpath, const Config *cfg,
     fclose(f);
 }
 
+/* Single-line progress bar to stderr. `cur/tot` are cumulative sweeps
+ * (thermalization + measurement), so the bar runs smoothly 0->100% across both
+ * phases; `phase` labels which one is active. Only used when stderr is a TTY
+ * and the run is non-verbose (see main). For adaptive runs (eps>0) it may
+ * finish early, when the run converges before `tot` sweeps. */
+static void draw_bar(long cur, long tot, double elapsed, const char *phase) {
+    const int width = 30;
+    double frac = tot > 0 ? (double)cur / (double)tot : 0.0;
+    if (frac > 1.0) frac = 1.0;
+    int filled = (int)(frac * width + 0.5);
+    char bar[64];
+    for (int i = 0; i < width; i++) bar[i] = (i < filled) ? '#' : '.';
+    bar[width] = '\0';
+    fprintf(stderr, "\r  [%s] %3d%%  %-7s %ld/%ld sweeps  %.1fs",
+            bar, (int)(frac * 100.0 + 0.5), phase, cur, tot, elapsed);
+    if (cur > 0 && frac > 0.0 && frac < 1.0)
+        fprintf(stderr, " (eta %.0fs)", elapsed * ((double)tot / cur - 1.0));
+    fprintf(stderr, "\033[K");   /* clear to end of line */
+    fflush(stderr);
+}
+
 int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
@@ -234,8 +249,6 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "it=%d", &cfg.inner) == 1) continue;
         if (sscanf(argv[i], "therm=%ld", &cfg.therm) == 1) continue;
         if (sscanf(argv[i], "sweeps=%ld", &cfg.sweeps) == 1) continue;
-        if (sscanf(argv[i], "eps=%lf", &cfg.eps) == 1) continue;
-        if (sscanf(argv[i], "minsweeps=%ld", &cfg.min_sweeps) == 1) continue;
         if (sscanf(argv[i], "block=%d", &cfg.block) == 1) continue;
         if (sscanf(argv[i], "overrelax=%d", &cfg.overrelax) == 1) continue;
         if (sscanf(argv[i], "meas=%d", &cfg.meas_every) == 1) continue;
@@ -261,20 +274,18 @@ int main(int argc, char *argv[]) {
 
     printf("brane: N=%d L=%d n=%d p8=%.3f  replicas=%d inner=%d (cores=%d)\n",
            cfg.N, L, cfg.n, cfg.p8, cfg.nthreads, cfg.inner, cfg.nthreads * cfg.inner);
-    printf("       therm=%ld sweeps<=%ld eps=%.3f minsweeps=%ld block=%d N8=%d\n",
-           cfg.therm, cfg.sweeps, cfg.eps, cfg.min_sweeps, cfg.block, geo.N8);
+    printf("       therm=%ld sweeps=%ld block=%d N8=%d\n",
+           cfg.therm, cfg.sweeps, cfg.block, geo.N8);
     if (cfg.overrelax > 0)
         printf("       overrelax=%d\n", cfg.overrelax);
 
     /* Resolve the output path and create its directory up front, so per-block
      * checkpoints during the run can write to it. Descriptive layout keeps
      * different configs from overwriting each other:
-     *   <outdir>/N<N>/p<p8>/<stop>/therm<T>_nt<NT>_it<IT>_seed<SEED>.dat
-     * where <stop> = eps<eps> (adaptive) or fixed<sweeps> (fixed-length). */
+     *   <outdir>/N<N>/p<p8>/fixed<sweeps>/therm<T>_nt<NT>_it<IT>_seed<SEED>.dat */
     if (!outpath[0]) {
         char stop[64], fname[256];
-        if (cfg.eps > 0) snprintf(stop, sizeof stop, "eps%g", cfg.eps);
-        else             snprintf(stop, sizeof stop, "fixed%ld", cfg.sweeps);
+        snprintf(stop, sizeof stop, "fixed%ld", cfg.sweeps);
         snprintf(fname, sizeof fname, "therm%ld_nt%d_it%d_seed%llu.dat",
                  cfg.therm, cfg.nthreads, cfg.inner, (unsigned long long)cfg.seed);
         snprintf(outpath, sizeof outpath, "%s/N%d/p%.2f/%s/%s",
@@ -295,29 +306,48 @@ int main(int argc, char *argv[]) {
     Replica *reps = calloc((size_t)cfg.nthreads, sizeof(Replica));
     double t0 = omp_get_wtime();
 
-    /* Thermalize all replicas (parallel), then measure in blocks. */
+    /* Progress bar: only when interactive (TTY) and not verbose (-v prints its
+     * own per-block lines). The bar spans thermalization + measurement. */
+    int show_bar = !cfg.verbose && isatty(fileno(stderr));
+    long total_sweeps = cfg.therm + cfg.sweeps;
+
+    /* Allocate + initialize all replicas once (parallel). */
     #pragma omp parallel num_threads(cfg.nthreads)
     {
         int r = omp_get_thread_num();
-        Replica *rep = &reps[r];
-        replica_alloc(rep, &geo);
-        replica_init(rep, &geo, cfg.seed, (uint64_t)(r + 1));
-        for (long s = 0; s < cfg.therm; s++)
-            replica_sweep(rep, &geo, &cfg);
+        replica_alloc(&reps[r], &geo);
+        replica_init(&reps[r], &geo, cfg.seed, (uint64_t)(r + 1));
     }
 
-    /* Adaptive measurement: keep running blocks of sweeps until the relative
-     * statistical error of Delta2 (estimated from the spread across the
-     * independent replicas) drops below cfg.eps, bounded by [min_sweeps,
-     * sweeps]. eps <= 0 disables the check (fixed cfg.sweeps sweeps). */
+    /* Thermalize in chunks (cfg.block sweeps) so progress can be shown. */
+    {
+        int chunk = cfg.block > 0 ? cfg.block : 20;
+        long tdone = 0;
+        while (tdone < cfg.therm) {
+            long todo = tdone + chunk > cfg.therm ? cfg.therm - tdone : chunk;
+            #pragma omp parallel for num_threads(cfg.nthreads) schedule(static, 1)
+            for (int r = 0; r < cfg.nthreads; r++)
+                for (long s = 0; s < todo; s++)
+                    replica_sweep(&reps[r], &geo, &cfg);
+            tdone += todo;
+            if (cfg.verbose)
+                printf("  thermalizing %ld/%ld sweeps  (%.1fs)\n",
+                       tdone, cfg.therm, omp_get_wtime() - t0);
+            else if (show_bar)
+                draw_bar(tdone, total_sweeps, omp_get_wtime() - t0, "therm");
+        }
+    }
+
+    /* Fixed-length measurement: run cfg.sweeps sweeps in blocks. Blocks exist
+     * for checkpointing and the per-block trace/progress; the Delta2 relative
+     * error across replicas is tracked and reported as a diagnostic. */
     long done = 0;
     double rel = -1.0;
-    int converged = 0;
     int block = cfg.block > 0 ? cfg.block : 20;
     double last_ckpt = omp_get_wtime();
     const double CKPT_INTERVAL = 60.0;  /* seconds between checkpoints */
 
-    /* Convergence trace: one row per block written to a sibling <out>.trace
+    /* Progress trace: one row per block written to a sibling <out>.trace
      * file (flushed each block), so the sweeps/Delta2/rel_err trajectory is
      * captured on disk regardless of stdout buffering. */
     char tracepath[600];
@@ -372,19 +402,17 @@ int main(int argc, char *argv[]) {
             fflush(trace);
         }
         if (cfg.verbose)
-            printf("  sweeps=%ld  Delta2=%.6f  Delta2 rel.err=%.4f  (target %.4f)\n",
-                   done, d2m, rel, cfg.eps);
-        if (cfg.eps > 0 && done >= cfg.min_sweeps && rel >= 0 && rel < cfg.eps) {
-            converged = 1;
-            break;
-        }
+            printf("  sweeps=%ld  Delta2=%.6f  Delta2 rel.err=%.4f\n",
+                   done, d2m, rel);
+        else if (show_bar)
+            draw_bar(cfg.therm + done, total_sweeps, omp_get_wtime() - t0, "measure");
         /* Checkpoint: persist current G so a killed run (e.g. job timeout)
          * still leaves usable data. Time-gated so fast small-N runs don't
          * thrash I/O. */
         if (omp_get_wtime() - last_ckpt > CKPT_INTERVAL) {
             Result cres = result_reduce(reps, cfg.nthreads, &geo);
             cres.rel_err = rel;
-            write_result_file(outpath, &cfg, &geo, &cres, L, done, converged,
+            write_result_file(outpath, &cfg, &geo, &cres, L, done,
                               omp_get_wtime() - t0, or_accept_rate(reps, cfg.nthreads));
             result_free(&cres);
             last_ckpt = omp_get_wtime();
@@ -392,6 +420,7 @@ int main(int argc, char *argv[]) {
         }
     }
     if (trace) fclose(trace);
+    if (show_bar) fprintf(stderr, "\n");   /* finalize the progress-bar line */
     if (ts) {
         FILE *sf = fopen(series, "w");
         if (sf) {
@@ -431,20 +460,17 @@ int main(int argc, char *argv[]) {
     Result res = result_reduce(reps, cfg.nthreads, &geo);
     res.sweeps_done = done;
     res.rel_err = rel;
-    res.converged = converged;
 
     printf("\ntime = %.2f s   accept = %.1f%%   samples = %ld   sweeps/replica = %ld\n",
            elapsed, 100.0 * res.accept_rate, res.total_meas, done);
-    printf("Delta2 rel.err = %.4f  %s(target %.4f)\n", res.rel_err,
-           converged ? "converged " : (cfg.eps > 0 ? "NOT converged " : "fixed-length "),
-           cfg.eps);
+    printf("Delta2 rel.err = %.4f\n", res.rel_err);
     printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
     if (cfg.overrelax > 0)
         printf("over-relaxation accept = %.1f%%  (%d OR sweeps / MC sweep)\n",
                100.0 * or_accept_rate(reps, cfg.nthreads), cfg.overrelax);
 
     /* ---- write final Green function G(q) and inverse Green G^{-1}(q) --- */
-    write_result_file(outpath, &cfg, &geo, &res, L, done, converged, elapsed,
+    write_result_file(outpath, &cfg, &geo, &res, L, done, elapsed,
                       or_accept_rate(reps, cfg.nthreads));
     printf("wrote %s\n", outpath);
     write_accept_file(outpath, &cfg, &geo, reps, L);

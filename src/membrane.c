@@ -421,7 +421,7 @@ Result result_reduce(const Replica *reps, int nreps, const Geometry *geo) {
     res.a = geo->a; res.p8 = sqrt(geo->Y * 3.0 / (2.0 * M_PI));
     res.G = calloc((size_t)LL, sizeof(double));
     res.Gerr = calloc((size_t)LL, sizeof(double));
-    res.sweeps_done = 0; res.rel_err = -1.0; res.converged = 0;
+    res.sweeps_done = 0; res.rel_err = -1.0;
 
     /* Per-mode mean and standard error of G across independent replicas.  */
     long total_meas = 0, proposed = 0, accepted = 0;
