@@ -37,14 +37,13 @@ Usage
 """
 import argparse
 import os
-import re
 import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Shared .dat readers + radial averaging (also used by explore/heatmap, which
 # import these names via `analyze.load` etc.).
-from braneio import load, load_legacy, radial_average  # noqa: E402,F401
+from braneio import load, radial_average  # noqa: E402,F401
 
 
 
@@ -362,99 +361,6 @@ def combined_all(pattern="data/N*/p*/*/*.dat", nbins=60, outdir="plots/combined"
     return rows
 
 
-def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
-                    lo=0.055, hi=0.11, nbins=40, outdir="plots/combined_legacy"):
-    """Combined multi-N pooled fit on the LEGACY large-N data (all files share
-    one physical coupling, default p8=0.3, so q8~p8=0.3).
-
-    The fit window is the exact legacy one: q in [0.055, 0.11], hardcoded in
-    legacy/plot.gp (fit2=0.11, fit1=.5*fit2) as an ABSOLUTE q-range. The model
-    there, x^4*(a*p8/x)^eta, is a pure power law q^(4-eta), so this is just a
-    log-log slope over that window -- well below the crossover q8~p8=0.3, where
-    the anomalous plateau lives. Each N is radially averaged; the in-window
-    points are pooled into one count-weighted slope. Returns (eta, err, npts,
-    nN)."""
-    import glob
-    files = sorted(glob.glob(pattern),
-                   key=lambda p: int(re.search(r"N=(\d+)", p).group(1)))
-    if not files:
-        sys.exit(f"no legacy files match {pattern}")
-    os.makedirs(outdir, exist_ok=True)
-    q, gi, ge, Ns = [], [], [], []          # ALL points (colored by N in plot)
-    per_n = []                               # (N, eta_w, err_w) per file
-    for f in files:
-        qmag, G, N, L, a = load_legacy(f)
-        qr, Gr, Ginv_r, cnt, Ginv_err = radial_average(qmag, G, nbins)
-        q.extend(qr); gi.extend(Ginv_r); ge.extend(Ginv_err)
-        Ns.extend([N] * len(qr))
-        inw = int(((qr >= lo) & (qr <= hi)).sum())
-        e1, er1, _ = fit_eta_window(qr, Ginv_r, cnt, lo, hi, Ginv_err)
-        if e1 is not None:
-            per_n.append((N, e1, er1))
-        print(f"  N={N:3d}  a={a:.4f}  window=[{lo:.3f},{hi:.3f}]  in-window pts={inw}"
-              f"  eta_N={'%.3f'%e1 if e1 is not None else 'n/a'}")
-    q, gi, ge, Ns = map(np.array, (q, gi, ge, Ns))
-    # fit uses only in-window points
-    inw = (q >= lo) & (q <= hi)
-    eta, err, npts = fit_pooled(q[inw], gi[inw], ge[inw])
-    nN = len(set(Ns.tolist()))
-    print(f"\nCOMBINED (legacy, q8~p8={p8}, legacy window=[{lo:.3f},{hi:.3f}]): "
-          f"eta = {eta:.3f} +/- {err:.3f}   "
-          f"({nN} sizes N={Ns.min()}-{Ns.max()}, {npts} in-window pts)")
-    plot_combined(q, gi, ge, Ns, eta, err,
-                  os.path.join(outdir, "combined_legacy.png"),
-                  lo, hi, coupling=p8)
-    _plot_eta_of_N(per_n, eta, err, lo, hi, p8,
-                   os.path.join(outdir, "eta_vs_N.png"))
-    return eta, err, npts, nN
-
-
-def _plot_eta_of_N(per_n, eta_pooled, err_pooled, lo, hi, p8, png):
-    """eta measured per single N (windowed fit over [lo,hi]) vs N -- tests
-    whether the exponent is N-independent (universal) at these large sizes."""
-    if not per_n:
-        return
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return
-    N = np.array([r[0] for r in per_n], float)
-    e = np.array([r[1] for r in per_n], float)
-    er = np.array([r[2] for r in per_n], float)
-    # trend test: weighted linear regression eta vs N
-    w = 1.0 / np.where(er > 0, er, np.nan) ** 2
-    ok = np.isfinite(w)
-    slope = serr = None
-    if ok.sum() >= 3:
-        W = np.diag(w[ok]); X = np.vstack([N[ok], np.ones(ok.sum())]).T
-        cov = np.linalg.inv(X.T @ W @ X)
-        beta = cov @ X.T @ W @ e[ok]
-        slope, serr = float(beta[0]), float(np.sqrt(cov[0, 0]))
-    fig, ax = plt.subplots(figsize=(7.5, 5))
-    ax.errorbar(N, e, yerr=er, fmt="o", color="C0", capsize=3,
-                label=r"per-$N$ windowed $\eta$")
-    ax.axhspan(eta_pooled - err_pooled, eta_pooled + err_pooled,
-               color="C1", alpha=0.20)
-    ax.axhline(eta_pooled, color="C1", lw=1.5,
-               label=rf"pooled $\eta={eta_pooled:.3f}\pm{err_pooled:.3f}$")
-    ax.axhline(0.78, ls=":", color="0.4", label=r"thesis $\eta=0.78$")
-    ttl = rf"Legacy $\eta$ vs $N$  (window $[{lo:.3f},{hi:.3f}]$, $q_8\!\sim\!p_8={p8}$)"
-    if slope is not None:
-        sig = abs(slope) / serr if serr else 0.0
-        ax.set_title(ttl + "\n" +
-                     rf"trend $d\eta/dN={slope:+.4f}\pm{serr:.4f}$ "
-                     rf"({sig:.1f}$\sigma$)")
-    else:
-        ax.set_title(ttl)
-    ax.set_xlabel(r"$N$  ($L=2N+1$)"); ax.set_ylabel(r"windowed $\eta$")
-    ax.grid(alpha=0.3); ax.legend(frameon=False, fontsize=9)
-    fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
-    print(f"[plot] wrote {png}"
-          + (f"   (d eta/dN = {slope:+.4f} +/- {serr:.4f})" if slope is not None else ""))
-
-
 def _plot_eta_of_p8(rows, png):
     try:
         import matplotlib
@@ -640,18 +546,7 @@ def main():
                          "(default glob data/N*/p*/*/*.dat; pass e.g. 'example_data/N=*.dat')")
     ap.add_argument("--combined-p8", type=float, default=None,
                     help="combined fit for a single p8 only (implies --combined)")
-    ap.add_argument("--legacy", metavar="GLOB", nargs="?",
-                    const="legacy/example_data/N=*.dat",
-                    help="combined multi-N fit on ORIGINAL legacy-format files "
-                         "(default legacy/example_data/N=*.dat, the preserved backup); "
-                         "reformatted example_data/ now works with --combined instead")
-    ap.add_argument("--p8", type=float, default=0.3,
-                    help="physical coupling of the legacy runs (fit ceiling); default 0.3")
     args = ap.parse_args()
-
-    if args.legacy:
-        combined_legacy(args.legacy, p8=args.p8, nbins=args.nbins)
-        return
 
     if args.combined or args.combined_p8 is not None:
         if args.combined_p8 is not None:

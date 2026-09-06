@@ -9,7 +9,8 @@ plot_acceptance each used to re-implement. Two formats exist:
       q1 q2 qx qy qmag G Gerr Ginv
   (older files predate Gerr and have 7 columns; Ginv is then the last column).
 * Legacy example_data dumps use a different multi-line layout, handled by the
-  load_legacy() / read_legacy_raw() helpers.
+  read_legacy_raw() helper (used by tools/reformat_legacy.py to convert the raw
+  thesis dumps into the modern format).
 
 Only numpy is required.
 """
@@ -98,23 +99,6 @@ def read_legacy_raw(path):
     body = toks[:need].reshape(L * L, 5)      # [c0, c1, re, im, g]
     trailer = toks[need:need + 3]
     return body, trailer, N, L, a
-
-
-def load_legacy(path):
-    """Read a LEGACY brane file for analysis.
-
-    Signed frequency is q1 if q1<=N else q1-L, and |q| = a*sqrt(q1s^2 + q2s^2).
-    Returns (qmag, G, N, L, a) for the usable modes (g>0, c1>0, q>0).
-    """
-    body, _trailer, N, L, a = read_legacy_raw(path)
-    c1, g = body[:, 1], body[:, 4]
-    idx = np.arange(L * L); q1, q2 = idx // L, idx % L
-    s1 = np.where(q1 <= N, q1, q1 - L)
-    s2 = np.where(q2 <= N, q2, q2 - L)
-    qmag = a * np.sqrt(s1.astype(float) ** 2 + s2.astype(float) ** 2)
-    good = (g > 0) & (c1 > 0) & (qmag > 0)
-    G = g[good] / c1[good]
-    return qmag[good], G, N, L, a
 
 
 # ---- rotational (radial) averaging -----------------------------------------
