@@ -23,17 +23,21 @@ brew install libomp
 # 2. Build:
 make
 
-# 3. Run the default simulation (N=36, p8=0.4, ~52 s on 16 cores):
-./brane -v
+# 3. Run a quick simulation (N=36, p8=0.4; ~1 min on 12 cores):
+./brane -v therm=80 sweeps=120 out=data/N=36.dat
 
 # 4. Set up the Python analysis env (once) and extract eta + plot:
 uv sync
 uv run tools/analyze.py data/N=36.dat
 ```
 
-Expected default output: acceptance ≈ 50 %, and `analyze.py` reporting a
-`plateau eta` (primary), a `windowed slope`, and a heuristic `crossover fit`,
-plus a two-panel PNG (inverse Green + effective exponent).
+Expected output: acceptance ≈ 50 %, and `analyze.py` reporting a `low-q plateau`
+eta (primary), a `windowed` eta, and a heuristic `crossover fit`, plus a
+two-panel PNG (inverse Green + effective exponent).
+
+> A bare `./brane` (no `out=`) instead writes to a descriptive path
+> `data/N<N>/p<p8>/<stop>/therm..._nt..._it..._seed....dat` (see
+> [Output layout](#output-format)); pass `out=` for a predictable filename.
 
 ### Dependencies
 
@@ -57,30 +61,37 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   N=<int>        half lattice size, L = 2N+1        (default 36)
   n=<int>        half move-zone size, l = 2n+1      (default N)
   p8=<float>     interaction strength, 0 < p8 < pi  (default 0.4)
-  nt=<int>       independent replicas / threads     (default 12)
-  therm=<int>    thermalization sweeps per replica  (default 80)
+  nt=<int>       independent replicas / threads     (default min(cores,12))
+  it=<int>       threads per replica (large-N reach) (default 1)
+  therm=<int>    thermalization sweeps per replica  (default 300)
   sweeps=<int>   MAX measurement sweeps (cap)       (default 2000)
-  eps=<float>    target rel. stat. error on Delta2  (default 0.01; 0=off)
-  minsweeps=<int> min sweeps before stopping        (default 40)
+  eps=<float>    target rel. stat. error on Delta2  (default 0.005; 0=off)
+  minsweeps=<int> min sweeps before stopping        (default 200)
   block=<int>    sweeps between convergence checks   (default 20)
+  overrelax=<int> over-relaxation sweeps per MC sweep (default 0=off)
   meas=<int>     measure every M sweeps             (default 1)
   d0=<float>     base Metropolis step size          (default 2.6)
   seed=<int>     base RNG seed (reproducible)       (default 12345)
-  out=<path>     output file (default data/N=<N>.dat)
+  out=<path>     explicit output .dat path
+  outdir=<dir>   base dir; engine builds a descriptive subpath (default data)
+  series=<path>  per-sweep Delta2 series (replica 0) for tau
+  qseries=<path> per-sweep |h_q|^2 ray (replica 0) for per-mode tau(q)
   -v             per-replica progress
   -h             help
 ```
 
 One **sweep** = `l·l` attempted single-mode updates. Each replica is an
 independent Markov chain seeded by `(seed, replica_index)`, so runs are fully
-reproducible.
+reproducible. `it>1` (intra-chain parallelism) helps only at large `N` on
+macOS/libomp and regresses on Linux — keep `it=1` on the cloud (see
+[cloud/SIMCLOUD.md](cloud/SIMCLOUD.md)).
 
 ### Convergence and error bars
 
 The measurement phase runs in **blocks** and stops when the run has genuinely
 converged, not after a fixed count. After each `block` sweeps it estimates the
 **relative statistical error of `Δ² = Σ_q⟨|h_q|²⟩`** from the spread across the
-independent replicas, and stops once that error drops below `eps` (default 1 %),
+independent replicas, and stops once that error drops below `eps` (default 0.5 %),
 bounded by `minsweeps … sweeps`. Set `eps=0` to force a fixed `sweeps` run.
 
 Because the replicas are independent, every observable gets a real statistical
@@ -131,13 +142,11 @@ knob; extracting the true universal η needs the thesis's large-`N` scaling.
    matches both asymptotes but the crossover *shape* is not from theory, so its
    η is model-dependent and can be biased — indicative, not truth.
 
-All modes are rotationally averaged into `q_r=|q|` shells first (uses every
-direction, not just axes/diagonals). To see the full 2D structure (and the
-lattice anisotropy) directly:
-
-```bash
-uv run tools/green_map.py data/N=40.dat   # heatmaps of G(qx,qy) and G^-1(qx,qy)
-```
+Every mode `(q_x, q_y)` is kept as its own point `(q_r=|q|, G⁻¹)` — **`analyze.py`
+does not angular-average** `G` over `|q|` shells, since that would collapse the
+membrane's anisotropy. The plateau/running-exponent estimates are computed on the
+raw per-mode cloud, and the plot colors every point by its polar angle so the
+lattice anisotropy stays visible in the fit itself.
 
 ### How η depends on N and p8
 
@@ -172,17 +181,33 @@ p8-dominated, N-flat picture.
 
 ## Output format
 
-`data/N=<N>.dat` is a text table (one row per non-zero mode):
+By default the engine writes a descriptive path so different configs never
+collide (`out=` overrides it with an explicit filename):
 
 ```
-# Fourier MC membrane   N=36 L=73 p8=0.4000 samples=1280 sweeps=120 nu=0.036 nu_err=0.02 rel_err=0.009 converged=1
+data/N<N>/p<p8>/<stop>/therm<T>_nt<NT>_it<IT>_seed<S>.dat
+                 └ stop = eps<eps> (adaptive) | fixed<sweeps> (fixed length)
+```
+
+Each `.dat` is a text table (one row per non-zero mode) with a multi-line
+`key=value` header that `tools/analyze.py` parses automatically:
+
+```
+# Fourier MC membrane
+# N=36 L=73 n=36 p8=0.4000 N8=4 Y=0.335103 d0=2.6000 seed=12345
+# nt=12 it=1 cores=12
+# therm=300 sweeps=120 sweeps_cap=2000 min_sweeps=200 block=20 meas_every=1 steps_per_sweep=5329
+# eps=0.005000 rel_err=0.009000 converged=1
+# samples=1440 accept_rate=0.4987 wall_s=52.30 nu=0.036000 nu_err=0.020000
+# overrelax=0 or_accept=0.0000
+# engine_sha=<git>
+# host=<hostname> cpu=<cpu brand>
 # q1 q2 qx qy qmag G Gerr Ginv
-q1  q2  qx  qy  |q|  G(q)=<|h_q|^2>  SE(G)  1/G(q)
 ```
 
-The header carries `N, L, p8, samples, sweeps, nu, nu_err, rel_err, converged`;
-`tools/analyze.py` parses it automatically (and still reads older 7-column
-files without `Gerr`).
+Columns are `q1 q2 qx qy |q| G(q)=<|h_q|^2> SE(G) 1/G(q)`. Older 7-column files
+without the `Gerr` (`SE(G)`) column are still read. A full field-by-field
+description of the header is in [docs/PIPELINE.md](docs/PIPELINE.md).
 
 ---
 
@@ -257,17 +282,24 @@ src/
 tests/
   test_correctness.c  incremental-vs-exact S_q validation
 tools/
+  braneio.py        shared .dat readers (header/columns/legacy) + radial average
   analyze.py        eta extraction (plateau/windowed/crossover) + plot
   explore.py        eta vs N and eta vs p8 sweeps
   heatmap.py        2D colormap of eta over the (N, p8) plane
-  green_map.py      2D maps of G(qx,qy) and G^-1(qx,qy) over the BZ
-  bench.sh          legacy-vs-new throughput benchmark
   scaling.py        core-scaling benchmark (table + plot)
+  bench.sh          legacy-vs-new throughput benchmark
+  autocorr.py       integrated autocorrelation time tau from a series= file
+  tau_q.py          per-mode tau(q) from qseries= files
+  plot_acceptance.py  acceptance vs sweep and vs |q| from .trace/.accept
+  study_convergence.py  error/thermalization vs sweeps from a .trace/log
+  reformat_legacy.py  legacy dump -> modern .dat format
 docs/
   model.md          physics, algorithm, sources, acceleration roadmap
+  PIPELINE.md       data format, analysis, and workflow reference
+cloud/              run the grid on Apple Simcloud (see cloud/README.md)
 legacy/             original thesis code (build.sh fixed for macOS libomp)
-example_data/       reference .dat files from the thesis runs (old format)
-lib/                method papers (Tröster; Los et al.)
+example_data/       reference thesis runs (N=100-200), reformatted to modern .dat
+lib/                method papers (Tröster; Los et al.) -- local only, gitignored
 Makefile            OpenMP autodetection (macOS libomp / Linux gcc)
 pyproject.toml      Python analysis env (uv sync)
 run.sh              multi-size sweep

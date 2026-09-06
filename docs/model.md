@@ -78,11 +78,13 @@ anomalous scaling window that is accessible on a small lattice.
 - **Green function** `G(q) = ⟨|h_q|²⟩`. In the harmonic theory
   `G⁻¹(q) ∼ q⁴`; anomalous elasticity gives `G⁻¹(q) ∼ q^(4−η)` for `q ≪ p₈`.
   A straight-line fit of `log G⁻¹` vs `log q` in that window has slope
-  `(4 − η)`, so **`η = 4 − slope`** (`tools/analyze.py`). Because the theory is
-  isotropic (`G` depends only on `q_r = |q|`), `analyze.py` **rotationally
-  averages** `G` over thin `q_r` annuli — using *all* `L²` modes and every
-  direction, not just the x/y axes and diagonals of the original thesis
-  analysis — which sharpens the fit.
+  `(4 − η)`, so **`η = 4 − slope`** (`tools/analyze.py`). Unlike the original
+  thesis analysis (which used only the x/y axes and diagonals), `analyze.py`
+  keeps **every** `(q_x, q_y)` mode as its own point `(q_r=|q|, G⁻¹)` and fits
+  the raw per-mode cloud — it does **not** angular-average `G` over `q_r`
+  annuli, since that would hide the lattice anisotropy. (A radial average is
+  still available and is used by the multi-size `explore.py`/`heatmap.py`
+  sweeps.)
 - **Poisson ratio** [thesis `mcmc.tex`]:
 
   ```

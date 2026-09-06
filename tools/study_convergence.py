@@ -26,7 +26,7 @@ LINE = re.compile(r"sweeps=(\d+)\s+Delta2=([-\d.eE+]+)\s+Delta2 rel\.err=([-\d.e
 
 def parse(path):
     """Read (sweeps, Delta2, rel_err) from either a <out>.dat.trace file
-    (tab columns: sweeps Delta2 rel_err wall_s) or a verbose stdout log."""
+    (tab columns: sweeps Delta2 rel_err accept wall_s) or a verbose stdout log."""
     sw, d2, re_ = [], [], []
     for line in open(path):
         if line.startswith("#") or not line.strip():

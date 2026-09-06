@@ -18,12 +18,12 @@ Usage:
 """
 import argparse
 import os
-import re
 import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from autocorr import integrated_tau
+from braneio import p8_from_header
 
 
 def read_qmag(path):
@@ -63,11 +63,7 @@ def main():
     tau_sem = tau_std / np.sqrt(nseed) if nseed > 1 else np.zeros(nmodes)
 
     # crossover q_c ~ p8 (read from header if present)
-    p8 = None
-    with open(a.qseries[0]) as f:
-        m = re.search(r"p8=([\d.]+)", f.read(400))
-        if m:
-            p8 = float(m.group(1))
+    p8 = p8_from_header(a.qseries[0], nbytes=400)
 
     print(f"tau(q) from {nseed} seed(s), burn={a.burn}")
     print(f"{'|q|':>8} {'tau':>8} {'+/-':>7}")

@@ -13,19 +13,12 @@ Usage:
 where <base.dat>.trace and <base.dat>.accept must exist (the engine writes them
 when a run completes). Default output is <base.dat>.acceptance.png.
 """
+import os
 import sys
-import re
 import numpy as np
 
-
-def read_p8(path):
-    try:
-        with open(path) as f:
-            head = f.read(500)
-        m = re.search(r"p8=([\d.]+)", head)
-        return float(m.group(1)) if m else None
-    except OSError:
-        return None
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from braneio import p8_from_header
 
 
 def main():
@@ -38,7 +31,7 @@ def main():
 
     tr = np.loadtxt(tracef, comments="#")          # sweeps Delta2 rel_err accept wall_s
     ac = np.loadtxt(accf, comments="#")            # q1 q2 qmag proposed accepted rate
-    p8 = read_p8(accf)
+    p8 = p8_from_header(accf)
 
     sw, acc_sweep = tr[:, 0], tr[:, 3]
     q, prop, rate = ac[:, 2], ac[:, 3], ac[:, 5]

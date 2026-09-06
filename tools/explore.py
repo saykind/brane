@@ -35,7 +35,7 @@ def run_sim(N, p8, nt, therm, sweeps, seed=12345):
     out = f"data/N{N}/p{p8:.2f}/data.dat"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     subprocess.run(["./brane", f"N={N}", f"p8={p8}", f"nt={nt}",
-                    f"therm={therm}", f"sweeps={sweeps}", f"seed={seed}",
+                    f"therm={therm}", f"sweeps={sweeps}", "eps=0", f"seed={seed}",
                     f"out={out}"], check=True, capture_output=True, text=True)
     return out
 
@@ -57,9 +57,14 @@ def sweep(configs, nt, therm, sweeps):
     for N, p8 in configs:
         f = run_sim(N, p8, nt, therm, sweeps)
         eta, err, spread, nu = measure(f)
+        if eta is None:
+            print(f"  N={N:3d} p8={p8:.2f} -> no fit (window too narrow at this size)",
+                  flush=True)
+            continue
         rows.append(dict(N=N, p8=p8, eta=eta, err=err, spread=spread, nu=nu))
-        print(f"  N={N:3d} p8={p8:.2f} -> eta={eta:.3f}+/-{err:.3f} "
-              f"(spread {spread:.2f}{'' if spread<0.25 else ' NO plateau'})",
+        sp = f"{spread:.2f}" if spread is not None else "n/a"
+        flag = "" if (spread is not None and spread < 0.25) else " NO plateau"
+        print(f"  N={N:3d} p8={p8:.2f} -> eta={eta:.3f}+/-{err:.3f} (spread {sp}{flag})",
               flush=True)
     return rows
 
@@ -124,12 +129,16 @@ def main():
 
     # CSV
     os.makedirs("plots", exist_ok=True)
+    def fmt(x):
+        return f"{x:.4f}" if x is not None else "nan"
     with open("plots/explore.csv", "w") as f:
         f.write("scan,N,p8,eta,err,spread,nu\n")
         for r in rows_N:
-            f.write(f"N,{r['N']},{r['p8']},{r['eta']:.4f},{r['err']:.4f},{r['spread']:.4f},{r['nu']:.4f}\n")
+            f.write(f"N,{r['N']},{r['p8']},{fmt(r['eta'])},{fmt(r['err'])},"
+                    f"{fmt(r['spread'])},{fmt(r['nu'])}\n")
         for r in rows_p8:
-            f.write(f"p8,{r['N']},{r['p8']},{r['eta']:.4f},{r['err']:.4f},{r['spread']:.4f},{r['nu']:.4f}\n")
+            f.write(f"p8,{r['N']},{r['p8']},{fmt(r['eta'])},{fmt(r['err'])},"
+                    f"{fmt(r['spread'])},{fmt(r['nu'])}\n")
     print("[csv] wrote plots/explore.csv")
 
     plot(rows_N, rows_p8, args.p8fix, args.Nfix, args.png)

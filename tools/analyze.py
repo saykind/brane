@@ -41,93 +41,11 @@ import re
 import sys
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Shared .dat readers + radial averaging (also used by explore/heatmap, which
+# import these names via `analyze.load` etc.).
+from braneio import load, load_legacy, radial_average  # noqa: E402,F401
 
-# ----------------------------------------------------------------------------
-def load(path):
-    header = {}
-    saw_col_header = False
-    with open(path) as f:
-        for line in f:
-            if line.startswith("#"):
-                if "qmag" in line and "Ginv" in line:
-                    saw_col_header = True
-                for tok in line[1:].split():
-                    if "=" in tok:
-                        k, v = tok.split("=", 1)
-                        header[k] = v
-                continue
-            break
-    if not saw_col_header:
-        sys.exit(
-            f"error: '{path}' is not a brane (new-format) output file.\n"
-            "  It looks like the legacy multi-line .dat format. Regenerate with\n"
-            f"      ./brane N=40 p8=0.4 out={path}\n"
-        )
-    data = np.loadtxt(path, comments="#")
-    # columns: q1 q2 qx qy qmag G Gerr Ginv   (Gerr added; older files lack it)
-    if data.shape[1] >= 8:
-        return data[:, 4], data[:, 5], data[:, 6], data[:, 7], header  # qmag,G,Gerr,Ginv
-    # backward compat: old 7-column files (no Gerr)
-    return data[:, 4], data[:, 5], np.zeros(len(data)), data[:, 6], header
-
-
-def load_legacy(path):
-    """Read a LEGACY brane file (example_data/N=<N>.dat).
-
-    Legacy layout: L*L modes in row-major (q1=0..L-1, q2=0..L-1) order, each
-    written over three lines -- "c0 c1", "Re(h) Im(h)", "g" -- followed by a
-    trailing "C px0 px1" line. Here g = sum_measurements |h_q|^2 and c1 is the
-    measurement count, so (legacy storage.c:86) the inverse Green function is
-    G^-1(q) = c1 / g, i.e. G(q) = g / c1. The mode index (q1,q2) is recovered
-    from the row-major position; signed frequency is q1 if q1<=N else q1-L, and
-    |q| = a*sqrt(q1s^2 + q2s^2) with a = 2*pi/L (continuum convention, matching
-    the legacy x = i*a axis).
-
-    Returns (qmag, G, N, L, a) for the usable modes (g>0, c1>0, q>0).
-    """
-    N = int(re.search(r"N=(\d+)", path).group(1)); L = 2 * N + 1; a = 2 * np.pi / L
-    toks = np.fromstring(open(path).read().replace("\t", " "), sep=" ")
-    body = toks[:L * L * 5].reshape(L * L, 5)      # [c0, c1, re, im, g]
-    c1, g = body[:, 1], body[:, 4]
-    idx = np.arange(L * L); q1, q2 = idx // L, idx % L
-    s1 = np.where(q1 <= N, q1, q1 - L)
-    s2 = np.where(q2 <= N, q2, q2 - L)
-    qmag = a * np.sqrt(s1.astype(float) ** 2 + s2.astype(float) ** 2)
-    good = (g > 0) & (c1 > 0) & (qmag > 0)
-    G = g[good] / c1[good]
-    return qmag[good], G, N, L, a
-
-
-def radial_average(qmag, G, nbins, Gerr=None):
-    """Rotationally average G over log-spaced |q| shells.
-
-    Returns (qr, Gr, Ginv_r, cnt, Ginv_err). Ginv_err is the propagated
-    statistical error of 1/<G> in each shell: if per-mode errors Gerr (from the
-    replica spread) are given, the shell error of the mean is
-    sqrt(sum Gerr_i^2)/n, else it falls back to the in-shell std / sqrt(n).
-    """
-    mask = (qmag > 0) & (G > 0) & np.isfinite(G)
-    q, g = qmag[mask], G[mask]
-    ge = (Gerr[mask] if Gerr is not None else np.zeros_like(g))
-    edges = np.logspace(np.log10(q.min()), np.log10(q.max()), nbins + 1)
-    idx = np.digitize(q, edges)
-    qr, gr, cnt, gerr = [], [], [], []
-    for b in range(1, nbins + 1):
-        sel = idx == b
-        n = int(sel.sum())
-        if n < 1:
-            continue
-        gm = g[sel].mean()
-        # statistical error of the shell mean
-        if Gerr is not None and np.any(ge[sel] > 0):
-            em = np.sqrt(np.sum(ge[sel] ** 2)) / n
-        else:
-            em = (g[sel].std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
-        qr.append(q[sel].mean()); gr.append(gm); cnt.append(n); gerr.append(em)
-    qr, gr, cnt, gerr = map(np.array, (qr, gr, cnt, gerr))
-    Ginv_r = 1.0 / gr
-    Ginv_err = gerr / gr ** 2          # error of 1/<G>
-    return qr, gr, Ginv_r, cnt, Ginv_err
 
 
 def effective_exponent(qr, Ginv_r):
@@ -475,8 +393,6 @@ def combined_legacy(pattern="example_data/N=*.dat", p8=0.3,
             per_n.append((N, e1, er1))
         print(f"  N={N:3d}  a={a:.4f}  window=[{lo:.3f},{hi:.3f}]  in-window pts={inw}"
               f"  eta_N={'%.3f'%e1 if e1 is not None else 'n/a'}")
-        # per-file fit.png (mirrors the modern analyze fit plot)
-        analyze_legacy_file(f, p8, lo, hi, qmag, 1.0 / G, qr, Gr, cnt, Ginv_err)
     q, gi, ge, Ns = map(np.array, (q, gi, ge, Ns))
     # fit uses only in-window points
     inw = (q >= lo) & (q <= hi)
@@ -537,24 +453,6 @@ def _plot_eta_of_N(per_n, eta_pooled, err_pooled, lo, hi, p8, png):
     fig.tight_layout(); fig.savefig(png, dpi=140); plt.close(fig)
     print(f"[plot] wrote {png}"
           + (f"   (d eta/dN = {slope:+.4f} +/- {serr:.4f})" if slope is not None else ""))
-
-
-def analyze_legacy_file(datfile, p8, lo, hi, qmag, Ginv_all, qr, Gr, cnt,
-                        Ginv_err, outdir="plots/legacy"):
-    """Per-file fit.png for a legacy example_data file: inverse Green + effective
-    exponent, fit over the sub-crossover window [lo, hi]. Writes
-    plots/legacy/N<N>/fit.png."""
-    N = int(re.search(r"N=(\d+)", datfile).group(1))
-    Ginv_r = 1.0 / Gr
-    eta_w, err_w, nsh = fit_eta_window(qr, Ginv_r, cnt, lo, hi, Ginv_err)
-    cross = fit_eta_crossover(qr, Ginv_r, cnt, lo, 1.0, eta0=eta_w or 0.78,
-                              q8_0=p8)
-    pdir = os.path.join(outdir, f"N{N}")
-    os.makedirs(pdir, exist_ok=True)
-    png = os.path.join(pdir, "fit.png")
-    gp = os.path.join(pdir, "fit.gp")
-    plot(qr, Ginv_r, cnt, qmag, Ginv_all, eta_w, cross, p8, lo, hi, png, gp,
-         datfile, Ginv_err=Ginv_err)
 
 
 def _plot_eta_of_p8(rows, png):

@@ -16,9 +16,12 @@ Usage:
 """
 import argparse
 import math
-import re
+import os
 import sys
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from braneio import read_legacy_raw
 
 PI = math.pi
 
@@ -31,20 +34,10 @@ def main():
     ap.add_argument("--d0", type=float, default=2.6, help="legacy base step (default 2.6)")
     a = ap.parse_args()
 
-    m = re.search(r"N=(\d+)", a.infile)
-    if not m:
-        sys.exit(f"cannot find N=<int> in filename {a.infile}")
-    N = int(m.group(1)); L = 2 * N + 1; sp = 2.0 * PI / L
+    body, trailer, N, L, sp = read_legacy_raw(a.infile)
     p8 = a.p8; Y = (2.0 * PI / 3.0) * p8 * p8; N8 = int(p8 / PI * N)
 
-    toks = np.fromstring(open(a.infile).read().replace("\t", " "), sep=" ")
-    need = L * L * 5
-    if toks.size < need:
-        sys.exit(f"{a.infile}: expected >= {need} numbers for N={N}, got {toks.size} "
-                 "(is this already reformatted?)")
-    body = toks[:need].reshape(L * L, 5)          # [c0, c1, re, im, g]
     c0, c1, g = body[:, 0], body[:, 1], body[:, 4]
-    trailer = toks[need:need + 3]
     C = trailer[0] if trailer.size >= 1 else float(np.max(c1))
     px0 = trailer[1] if trailer.size >= 2 else float("nan")
     px1 = trailer[2] if trailer.size >= 3 else float("nan")
@@ -96,7 +89,6 @@ def main():
                 ginv = 1.0 / G if G > 0 else 0.0
                 f.write(f"{q1}\t{q2}\t{qx:.8f}\t{qy:.8f}\t{qm:.8f}\t"
                         f"{G:.10e}\t{0.0:.10e}\t{ginv:.10e}\n")
-    import os
     os.replace(out + ".tmp", out)
     print(f"[reformat] {a.infile} -> {out}  (N={N} L={L} p8={p8} samples={samples} nu={nu_s})")
 

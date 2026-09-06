@@ -48,18 +48,30 @@ def run_and_measure(N, p8, nt, therm, sweeps, eps):
     return measure_file(out)
 
 
-def collect_all(pattern="data/N*/p*/*/*.dat"):
-    """Gather (N, p8, eta) from every cell file on disk (combines all runs)."""
+def collect_all(patterns=("data/N*/p*/data.dat", "data/N*/p*/*/*.dat")):
+    """Gather (N, p8, eta) from every cell file on disk (combines all runs).
+
+    Matches both the flat exploration layout (data/N<N>/p<p8>/data.dat, written
+    by this script and explore.py) and the engine's descriptive layout
+    (data/N<N>/p<p8>/<stop>/<run>.dat, e.g. cloud results merged by
+    simcloud_fetch.sh). When several files map to the same (N, p8) cell -- e.g.
+    multiple seeds -- their eta estimates are averaged, so each cell contributes
+    exactly one point (a duplicate (N,p8) would break the triangulation).
+    """
     import glob
-    pts = []
-    for f in sorted(glob.glob(pattern)):
+    from collections import defaultdict
+    if isinstance(patterns, str):
+        patterns = (patterns,)
+    files = sorted({f for pat in patterns for f in glob.glob(pat)})
+    cells = defaultdict(list)
+    for f in files:
         try:
             N, p8, eta = measure_file(f)
             if eta is not None and np.isfinite(eta):
-                pts.append((N, p8, eta))
+                cells[(N, p8)].append(eta)
         except Exception as e:
             print(f"  skip {f}: {e}")
-    return pts
+    return [(N, p8, float(np.mean(etas))) for (N, p8), etas in sorted(cells.items())]
 
 
 def plot_eta(pts, png, refine=0):
@@ -128,7 +140,8 @@ def main():
                     help="convergence target passed to brane (rel err on Delta2)")
     ap.add_argument("--png", default="plots/heatmap.png")
     ap.add_argument("--replot-all", action="store_true",
-                    help="replot EVERY data/N*/p*/*/*.dat cell on disk (combine all runs)")
+                    help="replot every cell on disk (data/N*/p*/data.dat and the "
+                         "engine's data/N*/p*/<stop>/<run>.dat), combining all runs")
     ap.add_argument("--refine", type=int, default=0,
                     help="triangulation subdivisions for a smoother map (no new sims)")
     args = ap.parse_args()
