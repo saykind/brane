@@ -173,6 +173,7 @@ int main(int argc, char *argv[]) {
     char outpath[512] = {0};
     char outdir[400] = "data";      /* base dir; descriptive subpath appended */
     char series[400] = {0};         /* optional: per-sweep Delta2 series (tau) */
+    char qseries[400] = {0};        /* optional: per-sweep |h_q|^2 ray (tau(q)) */
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(&cfg); return 0; }
@@ -196,6 +197,7 @@ int main(int argc, char *argv[]) {
         if (sscanf(argv[i], "out=%511s", sbuf) == 1) { strncpy(outpath, sbuf, sizeof(outpath) - 1); continue; }
         if (sscanf(argv[i], "outdir=%399s", sbuf) == 1) { strncpy(outdir, sbuf, sizeof(outdir) - 1); continue; }
         if (sscanf(argv[i], "series=%399s", sbuf) == 1) { strncpy(series, sbuf, sizeof(series) - 1); continue; }
+        if (sscanf(argv[i], "qseries=%399s", sbuf) == 1) { strncpy(qseries, sbuf, sizeof(qseries) - 1); continue; }
         printf("Unrecognized argument '%s'\n", argv[i]);
         return 1;
     }
@@ -290,6 +292,11 @@ int main(int argc, char *argv[]) {
     /* Optional per-sweep instantaneous Delta2 series (replica 0) for tau. */
     double *ts = series[0] ? malloc((size_t)cfg.sweeps * sizeof(double)) : NULL;
 
+    /* Optional per-sweep |h_q|^2 along the qx-axis ray q=(j,0), j=1..N (replica
+     * 0), for measuring the per-mode autocorrelation time tau(q). Stored
+     * row-major [sweep*N + (j-1)]. */
+    double *qts = qseries[0] ? malloc((size_t)cfg.sweeps * cfg.N * sizeof(double)) : NULL;
+
     while (done < cfg.sweeps) {
         long todo = block;
         if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
@@ -300,6 +307,10 @@ int main(int argc, char *argv[]) {
                 replica_sweep(rep, &geo, &cfg);
                 if ((s % cfg.meas_every) == 0) replica_measure(rep, &geo);
                 if (ts && r == 0) ts[done + s] = replica_delta2(rep, &geo);
+                if (qts && r == 0)
+                    for (int j = 1; j <= cfg.N; j++)
+                        qts[(done + s) * cfg.N + (j - 1)] =
+                            replica_mode_abs2(rep, &geo, j, 0);
             }
         }
         done += todo;
@@ -346,6 +357,27 @@ int main(int argc, char *argv[]) {
             printf("wrote series %s (%ld sweeps)\n", series, done);
         }
         free(ts);
+    }
+    if (qts) {
+        FILE *qf = fopen(qseries, "w");
+        if (qf) {
+            fprintf(qf, "# per-sweep |h_q|^2 along qx-axis ray q=(j,0), j=1..N "
+                        "(replica 0)  N=%d p8=%.4f nt=%d therm=%ld\n",
+                    cfg.N, cfg.p8, cfg.nthreads, cfg.therm);
+            /* column -> |q| map (qmag = a*j for the (j,0) ray) */
+            fprintf(qf, "# qmag:");
+            for (int j = 1; j <= cfg.N; j++) fprintf(qf, " %.8f", geo.a * j);
+            fprintf(qf, "\n# sweep then |h_q|^2 for each column\n");
+            for (long s = 0; s < done; s++) {
+                fprintf(qf, "%ld", s);
+                for (int j = 0; j < cfg.N; j++)
+                    fprintf(qf, "\t%.10e", qts[s * cfg.N + j]);
+                fprintf(qf, "\n");
+            }
+            fclose(qf);
+            printf("wrote qseries %s (%ld sweeps x %d modes)\n", qseries, done, cfg.N);
+        }
+        free(qts);
     }
 
     double elapsed = omp_get_wtime() - t0;

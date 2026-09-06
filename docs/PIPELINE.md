@@ -20,6 +20,7 @@ Replica-parallel Fourier Monte Carlo. Key options (`./brane -h`):
 | `outdir` | base dir; engine builds the descriptive path (below) |
 | `out` | explicit output path (overrides `outdir`) |
 | `series` | write per-sweep instantaneous Δ₂ (replica 0) for τ measurement |
+| `qseries` | write per-sweep \|h_q\|² along the qx-axis ray (replica 0) for per-mode τ(q) |
 
 Defaults: `therm=300` (matches legacy), `eps=0.005`, `minsweeps=200`.
 
@@ -48,6 +49,34 @@ crossover.
   (true OFMC). Tuning the *step* to 50% acceptance is a legitimate MC-efficiency
   criterion (detailed balance holds for any step; only efficiency changes) — not
   to be confused with tuning an *estimator* to a target η.
+
+**Is the ~30% low-q acceptance a problem? No — leave it as-is.** Three reasons:
+
+1. **The acceptance→efficiency curve is flat near the optimum.** For random-walk
+   Metropolis the efficiency-maximizing acceptance is ≈0.234 in high dimension and
+   ≈0.44 in 1D; a single-mode move here perturbs one complex amplitude (≈2 real
+   d.o.f.), so the sweet spot is ~0.35–0.44. Our low-q **30% is nearer that
+   theoretical optimum than 50% is** — the 50% target is Tröster's convenient
+   *uniform* choice, not a proven best. The τ penalty of 30% vs 50% is small
+   (order tens of percent), not a factor of several.
+2. **30% is the *healthy* side of mis-tuning.** Acceptance falls below optimum
+   when the step is *too large* (over-stepping) — which is our case. That is the
+   **opposite** of the pathology OFMC was built to cure: in *plain* FMC the low-q
+   modes accept ~**100%** because the step is far too *small* relative to their
+   huge amplitude, so they barely move and τ(q) diverges as q→0 (critical slowing
+   down). Our momentum-dependent step already removes that; at worst the slowest
+   modes now move a touch too aggressively.
+3. **The number that actually decides this is τ(q), not the acceptance** — and
+   it has now been **measured** (`qseries=` + `tools/tau_q.py`). OFMC's real goal
+   is *uniform τ(q)*. At N=100, p8=0.4 (3 seeds), **τ(q) is flat at ~1.3–2.6
+   sweeps across all |q|, including the lowest mode (τ≈2.6 at |q|=0.03)** — it
+   does **not** diverge as q→0. (Contrast Tröster's plain FMC, Fig. 1: ln τ grows
+   from ~2 to ~7–10 as q→0.) So the momentum-dependent step already delivers the
+   OFMC outcome — no critical slowing down — despite the ~30% low-q acceptance.
+
+*Conclusion:* the step tuning is fine as-is; the ~30% low-q acceptance is a
+non-issue (τ(q) is flat). Revisit only if a much larger N shows τ(q) starting to
+climb at low q.
 
 ## Output layout & format
 
@@ -97,6 +126,7 @@ exponent with plateau). `--all [GLOB]` batch-plots to `plots/<mirror>/`.
 |---|---|
 | `tools/analyze.py` | per-file & combined η analysis + plots |
 | `tools/autocorr.py` | integrated autocorrelation time τ from a `series=` file |
+| `tools/tau_q.py` | per-mode τ(q) from `qseries=` files (averages over seeds), plots τ vs \|q\| |
 | `tools/plot_acceptance.py` | acceptance vs sweep + vs \|q\| from a run's `.trace`/`.accept` |
 | `tools/study_convergence.py` | error/thermalization vs sweeps from a `.trace` or log |
 | `tools/reformat_legacy.py` | legacy dump → modern format |

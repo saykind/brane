@@ -368,6 +368,15 @@ double replica_delta2(const Replica *rep, const Geometry *geo) {
     return s;
 }
 
+/* Instantaneous |h_q|^2 for a single mode q=(q1,q2) (q in [-N,N]), for
+ * recording a per-mode time series used to measure the per-mode autocorrelation
+ * time tau(q). */
+double replica_mode_abs2(const Replica *rep, const Geometry *geo, int q1, int q2) {
+    int L = geo->L;
+    int i = geo->wrap[q1 + L] * L + geo->wrap[q2 + L];
+    return creal(rep->h[i] * conj(rep->h[i]));
+}
+
 /* Mean over replicas of Delta2 = sum_q <|h_q|^2> (the quantity whose relative
  * error the adaptive driver converges). Useful for tracking thermalization. */
 double delta2_mean(const Replica *reps, int nreps, const Geometry *geo) {

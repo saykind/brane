@@ -122,6 +122,9 @@ double   delta2_mean(const Replica *reps, int nreps, const Geometry *geo);
 /* Instantaneous Delta2 = sum_q |h_q|^2 for one replica (per-sweep time series). */
 double   replica_delta2(const Replica *rep, const Geometry *geo);
 
+/* Instantaneous |h_q|^2 for a single mode q=(q1,q2) (per-mode tau(q) series). */
+double   replica_mode_abs2(const Replica *rep, const Geometry *geo, int q1, int q2);
+
 Result   result_reduce(const Replica *reps, int nreps, const Geometry *geo);
 void     result_free(Result *res);
 
