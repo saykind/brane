@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # simcloud_submit.sh -- package the repo + submit the whole (N, p8) grid as a
-# Simcloud batch, one job per cell (mirrors slurm_grid.sbatch, but on ACS).
+# Simcloud batch, one job per cell.
 #
 # Run this on your laptop (needs the `simcloud` CLI + AppleConnect). It:
 #   1. builds a source bundle from the repo (no data/plots/binaries),
@@ -104,7 +104,8 @@ batch=$(simcloud -q batch post \
 
 echo
 echo "=== batch submitted: $batch ==="
-echo "monitor : simcloud -c $CLUSTER job wait --batch $batch --summary --poll-interval 30s"
+echo "monitor : CLUSTER=$CLUSTER bash cloud/simcloud_monitor.sh $batch   # live progress bar"
+echo "  (or)  : simcloud -c $CLUSTER job wait --batch $batch --summary --poll-interval 30s"
 echo "list    : simcloud -c $CLUSTER job list --batch $batch"
 echo "fetch   : CLUSTER=$CLUSTER BATCH=$batch bash cloud/simcloud_fetch.sh"
 echo

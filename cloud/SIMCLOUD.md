@@ -1,36 +1,38 @@
 # Running brane on Simcloud (Apple ACS batch compute)
 
 Notes and tooling for running the Fourier Monte Carlo engine on Apple's
-Simcloud. Complements the generic cloud recipes in [`README.md`](README.md)
-(AWS/GCP/SLURM). **TL;DR: use `mr2-as` (M2 Ultra), not `mr2` (x86).**
+Simcloud. Complements the workflow overview in [`README.md`](README.md).
+**TL;DR: use `mr2-as` (M2 Ultra), not `mr2` (x86).**
 
 ## Scripts
 
 | Script | Runs where | Purpose |
 |---|---|---|
-| [`simcloud_lib.sh`](simcloud_lib.sh) | laptop | shared helpers: progress bar, source/toolchain bundles, batch watcher |
-| [`simcloud_task.sh`](simcloud_task.sh) | in-job | one batch task = one `(N,p8)` cell (maps `$SC_BATCH_ID`) |
+| [`overnight.sh`](overnight.sh) | laptop | **entrypoint** — sets production defaults, then execs `simcloud_submit.sh` |
 | [`simcloud_submit.sh`](simcloud_submit.sh) | laptop | package repo + submit the whole grid as a batch |
+| [`simcloud_task.sh`](simcloud_task.sh) | in-job | one batch task = one `(N,p8)` cell (maps `$SC_BATCH_ID`) |
+| [`simcloud_monitor.sh`](simcloud_monitor.sh) | laptop | live progress-bar monitor of a batch |
 | [`simcloud_fetch.sh`](simcloud_fetch.sh) | laptop | wait for batch, download output bundles, rebuild `data/` tree |
-| [`simcloud_bench.sh`](simcloud_bench.sh) | in-job | scaling benchmark: wall time vs `N` and vs cores |
-| [`simcloud_bench_run.sh`](simcloud_bench_run.sh) | laptop | launch the benchmark on one big-core box, stream live |
 
 ## Quick start
 
 ```sh
-# 1. Benchmark the cluster first (small, ~minutes) -- confirms speed + scaling.
-CLUSTER=mr2-as OWNER=hwt:atg:sph:$USER NET=e57cff0a-d781-4250-8ca5-065e283c8da1 \
-  TOOLCHAIN=0 CPUS=8 NS=24,32 NTS=1,2,4,8 SWEEPS=100 bash cloud/simcloud_bench_run.sh
-
-# 2. Submit a small grid slice to validate the round-trip.
+# 1. Submit a small grid slice first to validate the round-trip.
 CLUSTER=mr2-as OWNER=hwt:atg:sph:$USER NET=e57cff0a-d781-4250-8ca5-065e283c8da1 \
   TOOLCHAIN=0 CPUS=16 NS=32,40,48 P8S=0.4,0.7 bash cloud/simcloud_submit.sh
+#    -> prints the exact monitor/fetch commands with the batch id filled in
 
-# 3. Wait + pull results back into data/ (uses cloud/.last_batch).
+# 2. Watch it (live progress bar; uses cloud/.last_batch).
+CLUSTER=mr2-as bash cloud/simcloud_monitor.sh
+
+# 3. Pull results back into data/ once jobs finish.
 CLUSTER=mr2-as bash cloud/simcloud_fetch.sh
 
 # 4. Analyze locally.
 uv run tools/analyze.py --all
+
+# For the real production grid, just use the wrapper (edit knobs in its header):
+bash cloud/overnight.sh
 ```
 
 ## How it maps onto Simcloud
@@ -46,7 +48,7 @@ drive the design:
 
 So each `(N, p8)` **cell is an independent Simcloud job** (`simcloud batch post`,
 one job per cell, indexed by `$SC_BATCH_ID`), and within a cell `--cpus` = the
-number of replicas. The 64 cells run in parallel across the fleet, so grid wall
+number of replicas. All cells run in parallel across the fleet, so grid wall
 time ≈ the *slowest single cell*, not the sum.
 
 ## Cluster comparison (measured 2026-09-04)
@@ -64,7 +66,7 @@ surprise, and fatal for large-`N` reach (a single N=120 chain would take days).
 **M2 Ultra is only ~1.5× slower than the M4 and scales near-linearly**, making
 it the right cluster for both goals.
 
-### Projected per-cell wall (real params `therm=100 sweeps=4000`)
+### Projected per-cell wall (for a `therm=100 sweeps=4000` = 4100-sweep run)
 
 | N | x86 `mr2` (nt=32) | M2 Ultra `mr2-as` (nt=16) |
 |---|---|---|
@@ -76,8 +78,12 @@ it the right cluster for both goals.
 | 120 | 84.4 h | **16.9 h** |
 
 `N^4` scaling was confirmed locally (N=48/N=32 wall ratio 5.25 ≈ 1.5⁴=5.06).
-On x86, cap the grid at **N ≤ 64** and run big-`N` cells locally; on M2 Ultra
-the whole grid is feasible (even N=120 fits one job; AS max timeout is 7 d).
+On x86, cap the grid at **N ≤ 64** and run big-`N` cells locally. On M2 Ultra the
+whole grid is feasible: production now runs **N up to 180–200** at the shorter
+`therm=300 sweeps=800` (=1100-sweep) setting — the per-cell wall then scales down
+by ~4100/1100 from the table above, giving N=180 ~28.5 h and N=200 ~43.5 h (see
+[`overnight.sh`](overnight.sh) for the current sizing). `TIMEOUT=72h` leaves
+margin over the slowest cell; the `hwt:atg:sph` quota max timeout is 7 d.
 
 ### Intra-chain parallelism for large N (`it=`) — macOS only, avoid on Linux
 
@@ -140,9 +146,10 @@ VPC network ids for other groups/DCs: see the table at
 ## Gotchas learned the hard way
 
 - **`simcloud job run` orphans jobs on interrupt.** If you Ctrl-C the local
-  stream, the *remote* job keeps burning cores until its timeout. Use
-  `job post` + a trap that cancels on exit (as `simcloud_bench_run.sh` does),
-  and always check `simcloud job list --status inprogress` after interrupts.
+  stream, the *remote* job keeps burning cores until its timeout. Prefer
+  `job post` (as `simcloud_submit.sh` does) and monitor separately with
+  `simcloud_monitor.sh`; always check `simcloud job list --status inprogress`
+  after interrupts.
 - **The repo's stale `brane` binary ships in the bundle** and is a macOS Mach-O.
   `make` thinks it's up to date and skips rebuilding → `exit 126` (can't exec)
   on Linux. Fix: build with **`make -B`** (force) in-job.

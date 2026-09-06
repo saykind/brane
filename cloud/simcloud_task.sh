@@ -3,10 +3,9 @@
 #
 # Simcloud posts a batch of identical jobs (see simcloud_submit.sh); each job
 # gets a unique index in $SC_BATCH_ID. We map that index to a single (N, p8)
-# cell of the grid -- exactly like the SLURM array job (slurm_grid.sbatch) --
-# build the engine, run that one cell using all allocated cores as replicas,
-# and write the result under $OUTDIR so it can be shipped back as an output
-# bundle. Error on each G(q) point falls ~ 1/sqrt(nt * sweeps).
+# cell of the grid, build the engine, run that one cell using all allocated
+# cores as replicas, and write the result under $OUTDIR so it can be shipped
+# back as an output bundle. Error on each G(q) point falls ~ 1/sqrt(nt * sweeps).
 #
 # The repo is delivered as a bundle unpacked at /brane (see simcloud_submit.sh).
 set -euo pipefail

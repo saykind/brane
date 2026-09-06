@@ -21,8 +21,9 @@
 # Usage:
 #   bash cloud/overnight.sh                 # launch with defaults below
 #   NS=140,160,180,200 bash cloud/overnight.sh   # override any knob
-# Afterwards, pull results:
-#   CLUSTER=mr2-as bash cloud/simcloud_fetch.sh
+# Afterwards (submit prints the exact commands with the batch id filled in):
+#   CLUSTER=mr2-as bash cloud/simcloud_monitor.sh   # live progress bar
+#   CLUSTER=mr2-as bash cloud/simcloud_fetch.sh     # pull results into data/
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 scuser="$(simcloud -q -c mr2 user info 2>/dev/null | awk -F': *' '/^Username:/{print $2; exit}')"
