@@ -4,12 +4,13 @@
 # COMPLETES, so the timeout must exceed the run time (the engine also
 # checkpoints data.dat every 60s as a backup).
 #
-# Grid: N in {140,160,180,200} x p8 in {0.3,0.4,0.5,0.6,0.7} = 20 cells, one job
-# each. Layout: NT=16 replicas x IT=1 = 16 cores/cell. IMPORTANT: mr2-as jobs run
+# Grid: N in {180,200} x p8 in {0.3,0.4,0.5,0.6,0.7} = 10 cells, one job each.
+# (N=140,160 were already run -- see data/; add them back via NS= if needed.)
+# Layout: NT=16 replicas x IT=1 = 16 cores/cell. IMPORTANT: mr2-as jobs run
 # ARM *Linux* (SMI ubuntu22.04-v1, libgomp), NOT macOS -- and intra-chain
-# parallelism (IT>1) REGRESSES on Linux/libgomp (per our benchmarks), so keep
-# IT=1 on the cloud. IT>1 only helps on macOS/libomp (the local M-series Mac).
-# 16 replicas maximizes statistics (error ~ 1/sqrt(nt*sweeps)).
+# parallelism (IT>1) saturates at ~1.6x by IT=2 on this cloud (measured), so it
+# never beats more replicas; keep IT=1. IT>1 helps more on macOS/libomp (the
+# local M-series Mac). 16 replicas maximizes statistics (error ~ 1/sqrt(nt*sweeps)).
 #
 # Sizing (M2 Ultra ARM, ~N^4): N=160 measured ~58 s/sweep (1 thread); with
 # therm=300 + sweeps=800 = 1100 sweeps the wall (= one chain's single-thread time,
@@ -19,7 +20,7 @@
 #
 # Usage:
 #   bash cloud/overnight.sh                 # launch with defaults below
-#   NS=140,160 IT=1 NT=16 bash cloud/overnight.sh   # override any knob
+#   NS=140,160,180,200 bash cloud/overnight.sh   # override any knob
 # Afterwards, pull results:
 #   CLUSTER=mr2-as bash cloud/simcloud_fetch.sh
 set -euo pipefail
@@ -32,7 +33,7 @@ OWNER="${OWNER:-hwt:atg:sph:$scuser}" \
 NET="${NET:-e57cff0a-d781-4250-8ca5-065e283c8da1}" \
 TOOLCHAIN="${TOOLCHAIN:-0}" \
 CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-48h}" \
-NS="${NS:-140,160,180,200}" P8S="${P8S:-0.3,0.4,0.5,0.6,0.7}" \
+NS="${NS:-180,200}" P8S="${P8S:-0.3,0.4,0.5,0.6,0.7}" \
 THERM="${THERM:-300}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
 NT="${NT:-16}" IT="${IT:-1}" \
 TAG="${TAG:-brane-overnight}" \
