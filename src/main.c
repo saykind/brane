@@ -20,8 +20,13 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <unistd.h>
 #include <omp.h>
 #include "membrane.h"
+
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -30,6 +35,35 @@
 #ifndef GIT_SHA
 #define GIT_SHA "unknown"   /* overridden by the Makefile: -DGIT_SHA=... */
 #endif
+
+/* Record the host and CPU so a run's wall time can be interpreted (e.g. to
+ * compare it= speedups, or across heterogeneous clusters). Portable hostname;
+ * CPU brand via sysctl on macOS, /proc/cpuinfo on Linux, else "unknown". */
+static void hw_info(char *cpu, size_t ncpu, char *host, size_t nhost) {
+    if (gethostname(host, nhost) != 0) snprintf(host, nhost, "unknown");
+    host[nhost - 1] = '\0';
+    snprintf(cpu, ncpu, "unknown");
+#ifdef __APPLE__
+    size_t len = ncpu;
+    if (sysctlbyname("machdep.cpu.brand_string", cpu, &len, NULL, 0) != 0)
+        snprintf(cpu, ncpu, "unknown");
+#else
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) {
+            if (strncmp(line, "model name", 10) == 0) {
+                char *c = strchr(line, ':');
+                if (c) { c += (c[1] == ' ') ? 2 : 1;
+                         c[strcspn(c, "\n")] = '\0';
+                         snprintf(cpu, ncpu, "%s", c); }
+                break;
+            }
+        }
+        fclose(f);
+    }
+#endif
+}
 
 static Config default_config(void) {
     Config c;
@@ -110,6 +144,11 @@ static void write_result_file(const char *outpath, const Config *cfg,
             res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
     fprintf(f, "# overrelax=%d or_accept=%.4f\n", cfg->overrelax, or_rate);
     fprintf(f, "# engine_sha=%s\n", GIT_SHA);
+    {
+        char host[256], cpu[256];
+        hw_info(cpu, sizeof cpu, host, sizeof host);
+        fprintf(f, "# host=%s cpu=%s\n", host, cpu);
+    }
     fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
     for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
         for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {

@@ -96,7 +96,9 @@ columns `q1 q2 qx qy qmag G Gerr Ginv`:
 # therm=300 sweeps=800 sweeps_cap=800 min_sweeps=200 block=20 meas_every=1 steps_per_sweep=...
 # eps=0.005 rel_err=0.0034 converged=0
 # samples=12800 accept_rate=0.499 wall_s=... nu=0.048 nu_err=0.018
+# overrelax=0 or_accept=0.0000
 # engine_sha=<git>
+# host=<hostname> cpu=<cpu brand>   ← lets wall_s be interpreted / compared across nodes
 ```
 
 `example_data/` (legacy large-N reference, N=100–200, p8=0.3) has been
