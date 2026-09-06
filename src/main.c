@@ -26,6 +26,8 @@
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
+#else
+#include <sys/utsname.h>
 #endif
 
 #ifndef M_PI
@@ -61,6 +63,12 @@ static void hw_info(char *cpu, size_t ncpu, char *host, size_t nhost) {
             }
         }
         fclose(f);
+    }
+    /* aarch64 /proc/cpuinfo has no "model name"; fall back to the machine arch
+     * so the field is at least informative (e.g. "aarch64") rather than blank. */
+    if (strcmp(cpu, "unknown") == 0) {
+        struct utsname u;
+        if (uname(&u) == 0) snprintf(cpu, ncpu, "%s", u.machine);
     }
 #endif
 }

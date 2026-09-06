@@ -52,7 +52,7 @@ COUNT=$(( ${#NARR[@]} * ${#PARR[@]} ))
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 echo "=== brane -> Simcloud ($CLUSTER, $SMI) ==="
-echo "grid: ${#NARR[@]} N x ${#PARR[@]} p8 = $COUNT cells; $CPUS cpus/cell (=${CPUS} replicas)"
+echo "grid: ${#NARR[@]} N x ${#PARR[@]} p8 = $COUNT cells; $CPUS cpus/cell = NT=$NT replicas x IT=$IT inner"
 echo "params: therm=$THERM sweeps=$SWEEPS eps=$EPS minsweeps=$MINSW timeout=$TIMEOUT"
 echo "concurrent CPU demand if all run at once: $(( COUNT * CPUS )) (check your quota)"
 [ -n "$OWNER" ] && echo "owner (quota): $OWNER"
