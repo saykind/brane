@@ -14,9 +14,9 @@
 #
 # Sizing (M2 Ultra ARM, ~N^4): N=160 measured ~58 s/sweep (1 thread); with
 # therm=300 + sweeps=800 = 1100 sweeps the wall (= one chain's single-thread time,
-# all 16 chains run in parallel) is N=160 ~17.8h, N=180 ~28.5h, N=200 ~43.5h.
-# TIMEOUT=48h covers the slowest cell (N=200) with margin. (If quota max_timeout
-# < 48h, lower TIMEOUT and drop N=200, or split the grid.)
+# all 16 chains run in parallel) is N=180 ~28.5h, N=200 ~43.5h. TIMEOUT=72h gives
+# generous margin over the slowest cell (N=200) for slower-than-estimated nodes;
+# quota max_timeout on hwt:atg:sph is 7d so 72h is fine.
 #
 # Usage:
 #   bash cloud/overnight.sh                 # launch with defaults below
@@ -32,7 +32,7 @@ CLUSTER="${CLUSTER:-mr2-as}" \
 OWNER="${OWNER:-hwt:atg:sph:$scuser}" \
 NET="${NET:-e57cff0a-d781-4250-8ca5-065e283c8da1}" \
 TOOLCHAIN="${TOOLCHAIN:-0}" \
-CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-48h}" \
+CPUS="${CPUS:-16}" MEMORY="${MEMORY:-16}" DISK="${DISK:-30}" TIMEOUT="${TIMEOUT:-72h}" \
 NS="${NS:-180,200}" P8S="${P8S:-0.3,0.4,0.5,0.6,0.7}" \
 THERM="${THERM:-300}" SWEEPS="${SWEEPS:-800}" EPS="${EPS:-0}" MINSW="${MINSW:-100}" \
 NT="${NT:-16}" IT="${IT:-1}" \
