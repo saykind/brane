@@ -1,0 +1,491 @@
+/*
+ * main.c -- Replica-parallel driver for the Fourier Monte Carlo membrane
+ * simulation.
+ *
+ * Parallelization strategy: by default we run `nthreads` *independent* Markov
+ * chains ("replicas"), one per core, each with its own PCG stream -- this
+ * scales almost linearly and needs no per-step synchronization, and is the
+ * right choice for statistics (more replicas = smaller error bars).
+ *
+ * For the large-N *reach* goal a single chain is the bottleneck (one sweep is
+ * O(L^4) and sequential), so `inner` (it=) additionally parallelizes the
+ * O(L^2) step loop across cores. Use nt=1 it=<cores> for one fast chain, or a
+ * hybrid nt*it = cores. This only pays off on macOS (LLVM libomp) at large N;
+ * on Linux (GCC libgomp) per-step fork/join is too costly and it regresses --
+ * there, stick with replicas (it=1). Gated by lattice size (BRANE_PAR_MIN_LL).
+ * See cloud/SIMCLOUD.md for measurements.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#include <unistd.h>
+#include <omp.h>
+#include "membrane.h"
+
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#else
+#include <sys/utsname.h>
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#ifndef GIT_SHA
+#define GIT_SHA "unknown"   /* overridden by the Makefile: -DGIT_SHA=... */
+#endif
+
+/* Record the host and CPU so a run's wall time can be interpreted (e.g. to
+ * compare it= speedups, or across heterogeneous clusters). Portable hostname;
+ * CPU brand via sysctl on macOS, /proc/cpuinfo on Linux, else "unknown". */
+static void hw_info(char *cpu, size_t ncpu, char *host, size_t nhost) {
+    if (gethostname(host, nhost) != 0) snprintf(host, nhost, "unknown");
+    host[nhost - 1] = '\0';
+    snprintf(cpu, ncpu, "unknown");
+#ifdef __APPLE__
+    size_t len = ncpu;
+    if (sysctlbyname("machdep.cpu.brand_string", cpu, &len, NULL, 0) != 0)
+        snprintf(cpu, ncpu, "unknown");
+#else
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) {
+            if (strncmp(line, "model name", 10) == 0) {
+                char *c = strchr(line, ':');
+                if (c) { c += (c[1] == ' ') ? 2 : 1;
+                         c[strcspn(c, "\n")] = '\0';
+                         snprintf(cpu, ncpu, "%s", c); }
+                break;
+            }
+        }
+        fclose(f);
+    }
+    /* aarch64 /proc/cpuinfo has no "model name"; fall back to the machine arch
+     * so the field is at least informative (e.g. "aarch64") rather than blank. */
+    if (strcmp(cpu, "unknown") == 0) {
+        struct utsname u;
+        if (uname(&u) == 0) snprintf(cpu, ncpu, "%s", u.machine);
+    }
+#endif
+}
+
+static Config default_config(void) {
+    Config c;
+    c.N = 36;
+    c.n = 0;              /* 0 => set to N later */
+    c.p8 = 0.4;          /* ~ graphene at T=300 K (see chapters/overview.tex) */
+    /* Default to 12 replicas: on the M4 Max (12 P + 4 E cores) throughput
+     * peaks near the performance-core count; the E-cores gate the end-of-run
+     * barrier and add nothing (see tools/scaling.py). Capped by availability. */
+    int mx = omp_get_max_threads();
+    c.nthreads = mx < 12 ? mx : 12;
+    c.inner = 1;         /* threads per replica (intra-chain); 1 = replica-only */
+    c.therm = 300;       /* thermalization sweeps (matches legacy MTH=300)   */
+    c.sweeps = 2000;     /* measurement sweeps (fixed-length run)            */
+    c.meas_every = 1;
+    c.d0 = 2.6;
+    c.seed = 12345u;
+    c.verbose = 0;
+    c.block = 20;        /* sweeps per block (checkpoint / trace cadence)    */
+    c.overrelax = 0;     /* over-relaxation sweeps per Metropolis sweep      */
+    return c;
+}
+
+static void usage(const Config *d) {
+    printf("brane -- Fourier Monte Carlo of a 2D crystalline membrane\n\n");
+    printf("Usage: brane [options]\n\n");
+    printf("  -h, --help        show this message\n");
+    printf("  -v, --verbose     progress reporting\n");
+    printf("  N=<int>           half lattice size, L=2N+1        (%d)\n", d->N);
+    printf("  n=<int>           half move-zone size, l=2n+1      (=N)\n");
+    printf("  p8=<float>        interaction strength, 0<p8<pi    (%.2f)\n", d->p8);
+    printf("  nt=<int>          replicas / threads               (%d)\n", d->nthreads);
+    printf("  it=<int>          threads per replica (large-N)     (%d)\n", d->inner);
+    printf("  therm=<int>       thermalization sweeps per replica(%ld)\n", d->therm);
+    printf("  sweeps=<int>      measurement sweeps (fixed length) (%ld)\n", d->sweeps);
+    printf("  block=<int>       sweeps per block (checkpoint/trace)(%d)\n", d->block);
+    printf("  overrelax=<int>   over-relaxation sweeps per MC sweep (%d)\n", d->overrelax);
+    printf("  meas=<int>        measure every M sweeps           (%d)\n", d->meas_every);
+    printf("  d0=<float>        base step size                   (%.2f)\n", d->d0);
+    printf("  seed=<int>        base RNG seed                    (%llu)\n",
+           (unsigned long long)d->seed);
+    printf("  out=<path>        explicit output .dat path (overrides outdir layout)\n");
+    printf("  outdir=<dir>      base dir; writes <dir>/N<N>/p<p8>/fixed<sweeps>/therm..._nt..._it..._seed....dat\n");
+}
+
+/* Write G(q)/G^{-1}(q) to outpath atomically (temp file + rename), so a run
+ * that is killed mid-write -- e.g. by a Simcloud job timeout -- never leaves a
+ * truncated file, and the previous checkpoint survives. Called both per-block
+ * (checkpointing) and at the end. The header records the full run config as
+ * key=value tokens (tools/analyze.py reads any k=v it finds). */
+static void write_result_file(const char *outpath, const Config *cfg,
+                              const Geometry *geo, const Result *res,
+                              int L, long done, double wall_s,
+                              double or_rate) {
+    char tmp[600];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", outpath);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { fprintf(stderr, "cannot write %s\n", tmp); return; }
+    long steps_per_sweep = (long)(2 * cfg->n + 1) * (2 * cfg->n + 1);
+    fprintf(f, "# Fourier MC membrane\n");
+    fprintf(f, "# N=%d L=%d n=%d p8=%.4f N8=%d Y=%.6f d0=%.4f seed=%llu\n",
+            cfg->N, L, cfg->n, cfg->p8, geo->N8, geo->Y, cfg->d0,
+            (unsigned long long)cfg->seed);
+    fprintf(f, "# nt=%d it=%d cores=%d\n",
+            cfg->nthreads, cfg->inner, cfg->nthreads * cfg->inner);
+    fprintf(f, "# therm=%ld sweeps=%ld sweeps_cap=%ld block=%d meas_every=%d "
+               "steps_per_sweep=%ld\n",
+            cfg->therm, done, cfg->sweeps, cfg->block,
+            cfg->meas_every, steps_per_sweep);
+    fprintf(f, "# rel_err=%.6f\n", res->rel_err);
+    fprintf(f, "# samples=%ld accept_rate=%.4f wall_s=%.2f nu=%.6f nu_err=%.6f\n",
+            res->total_meas, res->accept_rate, wall_s, res->poisson, res->poisson_err);
+    fprintf(f, "# overrelax=%d or_accept=%.4f\n", cfg->overrelax, or_rate);
+    fprintf(f, "# engine_sha=%s\n", GIT_SHA);
+    {
+        char host[256], cpu[256];
+        hw_info(cpu, sizeof cpu, host, sizeof host);
+        fprintf(f, "# host=%s cpu=%s\n", host, cpu);
+    }
+    fprintf(f, "# q1 q2 qx qy qmag G Gerr Ginv\n");
+    for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
+        for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {
+            if (q1 == 0 && q2 == 0) continue;
+            int i1 = geo->wrap[q1 + L], i2 = geo->wrap[q2 + L];
+            double qx = geo->a * q1, qy = geo->a * q2;
+            double qm = sqrt(qx * qx + qy * qy);
+            double G = res->G[i1 * L + i2];
+            double Ge = res->Gerr[i1 * L + i2];
+            fprintf(f, "%d\t%d\t%.8f\t%.8f\t%.8f\t%.10e\t%.10e\t%.10e\n",
+                    q1, q2, qx, qy, qm, G, Ge, G > 0 ? 1.0 / G : 0.0);
+        }
+    fclose(f);
+    rename(tmp, outpath);
+}
+
+/* Aggregate over-relaxation acceptance rate across replicas (0 if OR is off
+ * or no OR moves have been proposed yet). */
+static double or_accept_rate(const Replica *reps, int n) {
+    long prop = 0, acc = 0;
+    for (int r = 0; r < n; r++) { prop += reps[r].or_proposed; acc += reps[r].or_accepted; }
+    return prop ? (double)acc / prop : 0.0;
+}
+
+/* Sum Metropolis proposed/accepted counts across replicas. */
+static void metropolis_counts(const Replica *reps, int n, long *prop, long *acc) {
+    long p = 0, a = 0;
+    for (int r = 0; r < n; r++) { p += reps[r].proposed; a += reps[r].accepted; }
+    *prop = p; *acc = a;
+}
+
+/* Write the per-mode Metropolis acceptance to <outpath>.accept: one row per
+ * mode (q1 q2 qmag proposed accepted rate), summed across replicas. This lets
+ * the analysis check whether the momentum-dependent step keeps acceptance
+ * ~uniform across |q| (Troster 2013 OFMC) or whether it varies with q (which
+ * would signal residual critical slowing down). */
+static void write_accept_file(const char *outpath, const Config *cfg,
+                              const Geometry *geo, const Replica *reps, int L) {
+    char path[620];
+    snprintf(path, sizeof path, "%s.accept", outpath);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "# per-mode Metropolis acceptance  N=%d p8=%.4f nt=%d\n",
+            cfg->N, cfg->p8, cfg->nthreads);
+    fprintf(f, "# q1 q2 qmag proposed accepted rate\n");
+    for (int q1 = -cfg->N; q1 <= cfg->N; q1++)
+        for (int q2 = -cfg->N; q2 <= cfg->N; q2++) {
+            if (q1 == 0 && q2 == 0) continue;
+            int i1 = geo->wrap[q1 + L], i2 = geo->wrap[q2 + L], i = i1 * L + i2;
+            long p = 0, a = 0;
+            for (int r = 0; r < cfg->nthreads; r++) { p += reps[r].prop_k[i]; a += reps[r].acc_k[i]; }
+            if (p == 0) continue;
+            double qx = geo->a * q1, qy = geo->a * q2, qm = sqrt(qx * qx + qy * qy);
+            fprintf(f, "%d\t%d\t%.8f\t%ld\t%ld\t%.6f\n", q1, q2, qm, p, a, (double)a / p);
+        }
+    fclose(f);
+}
+
+/* Single-line progress bar to stderr. `cur/tot` are cumulative sweeps
+ * (thermalization + measurement), so the bar runs smoothly 0->100% across both
+ * phases; `phase` labels which one is active. Only used when stderr is a TTY
+ * and the run is non-verbose (see main). For adaptive runs (eps>0) it may
+ * finish early, when the run converges before `tot` sweeps. */
+static void draw_bar(long cur, long tot, double elapsed, const char *phase) {
+    const int width = 30;
+    double frac = tot > 0 ? (double)cur / (double)tot : 0.0;
+    if (frac > 1.0) frac = 1.0;
+    int filled = (int)(frac * width + 0.5);
+    char bar[64];
+    for (int i = 0; i < width; i++) bar[i] = (i < filled) ? '#' : '.';
+    bar[width] = '\0';
+    fprintf(stderr, "\r  [%s] %3d%%  %-7s %ld/%ld sweeps  %.1fs",
+            bar, (int)(frac * 100.0 + 0.5), phase, cur, tot, elapsed);
+    if (cur > 0 && frac > 0.0 && frac < 1.0)
+        fprintf(stderr, " (eta %.0fs)", elapsed * ((double)tot / cur - 1.0));
+    fprintf(stderr, "\033[K");   /* clear to end of line */
+    fflush(stderr);
+}
+
+int main(int argc, char *argv[]) {
+    Config cfg = default_config();
+    char outpath[512] = {0};
+    char outdir[400] = "data";      /* base dir; descriptive subpath appended */
+    char series[600] = {0};         /* per-sweep Delta2 series (replica 0)      */
+    char qseries[600] = {0};        /* per-sweep |h_q|^2 ray (replica 0)        */
+
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(&cfg); return 0; }
+        if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) { cfg.verbose = 1; continue; }
+        if (argv[i][0] == '-') { printf("Unknown option '%s'\n", argv[i]); return 1; }
+        char sbuf[512];
+        if (sscanf(argv[i], "N=%d", &cfg.N) == 1) continue;
+        if (sscanf(argv[i], "n=%d", &cfg.n) == 1) continue;
+        if (sscanf(argv[i], "p8=%lf", &cfg.p8) == 1) continue;
+        if (sscanf(argv[i], "nt=%d", &cfg.nthreads) == 1) continue;
+        if (sscanf(argv[i], "it=%d", &cfg.inner) == 1) continue;
+        if (sscanf(argv[i], "therm=%ld", &cfg.therm) == 1) continue;
+        if (sscanf(argv[i], "sweeps=%ld", &cfg.sweeps) == 1) continue;
+        if (sscanf(argv[i], "block=%d", &cfg.block) == 1) continue;
+        if (sscanf(argv[i], "overrelax=%d", &cfg.overrelax) == 1) continue;
+        if (sscanf(argv[i], "meas=%d", &cfg.meas_every) == 1) continue;
+        if (sscanf(argv[i], "d0=%lf", &cfg.d0) == 1) continue;
+        if (sscanf(argv[i], "seed=%llu", (unsigned long long *)&cfg.seed) == 1) continue;
+        if (sscanf(argv[i], "out=%511s", sbuf) == 1) { strncpy(outpath, sbuf, sizeof(outpath) - 1); continue; }
+        if (sscanf(argv[i], "outdir=%399s", sbuf) == 1) { strncpy(outdir, sbuf, sizeof(outdir) - 1); continue; }
+        if (sscanf(argv[i], "series=%399s", sbuf) == 1) { strncpy(series, sbuf, sizeof(series) - 1); continue; }
+        if (sscanf(argv[i], "qseries=%399s", sbuf) == 1) { strncpy(qseries, sbuf, sizeof(qseries) - 1); continue; }
+        printf("Unrecognized argument '%s'\n", argv[i]);
+        return 1;
+    }
+    if (cfg.n <= 0 || cfg.n > cfg.N) cfg.n = cfg.N;
+    if (cfg.nthreads < 1) cfg.nthreads = 1;
+    if (cfg.inner < 1) cfg.inner = 1;
+    if (cfg.meas_every < 1) cfg.meas_every = 1;
+    if (cfg.overrelax < 0) cfg.overrelax = 0;
+    omp_set_num_threads(cfg.nthreads);
+    if (cfg.inner > 1) omp_set_max_active_levels(2);  /* allow nested inner teams */
+
+    Geometry geo = geometry_make(&cfg);
+    int L = geo.L;
+
+    printf("brane: N=%d L=%d n=%d p8=%.3f  replicas=%d inner=%d (cores=%d)\n",
+           cfg.N, L, cfg.n, cfg.p8, cfg.nthreads, cfg.inner, cfg.nthreads * cfg.inner);
+    printf("       therm=%ld sweeps=%ld block=%d N8=%d\n",
+           cfg.therm, cfg.sweeps, cfg.block, geo.N8);
+    if (cfg.overrelax > 0)
+        printf("       overrelax=%d\n", cfg.overrelax);
+
+    /* Resolve the output path and create its directory up front, so per-block
+     * checkpoints during the run can write to it. Descriptive layout keeps
+     * different configs from overwriting each other:
+     *   <outdir>/N<N>/p<p8>/fixed<sweeps>/therm<T>_nt<NT>_it<IT>_seed<SEED>.dat */
+    if (!outpath[0]) {
+        char stop[64], fname[256];
+        snprintf(stop, sizeof stop, "fixed%ld", cfg.sweeps);
+        snprintf(fname, sizeof fname, "therm%ld_nt%d_it%d_seed%llu.dat",
+                 cfg.therm, cfg.nthreads, cfg.inner, (unsigned long long)cfg.seed);
+        snprintf(outpath, sizeof outpath, "%s/N%d/p%.2f/%s/%s",
+                 outdir, cfg.N, cfg.p8, stop, fname);
+    }
+    {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "%s", outpath);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = '\0';
+            char cmd[600];
+            snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+            if (system(cmd)) { /* ignore */ }
+        }
+    }
+
+    /* Per-sweep diagnostic logs (replica 0) are written for EVERY run, as
+     * siblings of the .dat, unless an explicit series=/qseries= path was given:
+     *   <out>.series   per-sweep Delta2
+     *   <out>.qseries  per-sweep |h_q|^2 along the qx-axis ray q=(j,0)
+     * (join .trace + .accept, which are already always written). */
+    if (!series[0])  snprintf(series,  sizeof series,  "%s.series",  outpath);
+    if (!qseries[0]) snprintf(qseries, sizeof qseries, "%s.qseries", outpath);
+
+    Replica *reps = calloc((size_t)cfg.nthreads, sizeof(Replica));
+    double t0 = omp_get_wtime();
+
+    /* Progress bar: only when interactive (TTY) and not verbose (-v prints its
+     * own per-block lines). The bar spans thermalization + measurement. */
+    int show_bar = !cfg.verbose && isatty(fileno(stderr));
+    long total_sweeps = cfg.therm + cfg.sweeps;
+
+    /* Allocate + initialize all replicas once (parallel). */
+    #pragma omp parallel num_threads(cfg.nthreads)
+    {
+        int r = omp_get_thread_num();
+        replica_alloc(&reps[r], &geo);
+        replica_init(&reps[r], &geo, cfg.seed, (uint64_t)(r + 1));
+    }
+
+    /* Thermalize in chunks (cfg.block sweeps) so progress can be shown. */
+    {
+        int chunk = cfg.block > 0 ? cfg.block : 20;
+        long tdone = 0;
+        while (tdone < cfg.therm) {
+            long todo = tdone + chunk > cfg.therm ? cfg.therm - tdone : chunk;
+            #pragma omp parallel for num_threads(cfg.nthreads) schedule(static, 1)
+            for (int r = 0; r < cfg.nthreads; r++)
+                for (long s = 0; s < todo; s++)
+                    replica_sweep(&reps[r], &geo, &cfg);
+            tdone += todo;
+            if (cfg.verbose)
+                printf("  thermalizing %ld/%ld sweeps  (%.1fs)\n",
+                       tdone, cfg.therm, omp_get_wtime() - t0);
+            else if (show_bar)
+                draw_bar(tdone, total_sweeps, omp_get_wtime() - t0, "therm");
+        }
+    }
+
+    /* Fixed-length measurement: run cfg.sweeps sweeps in blocks. Blocks exist
+     * for checkpointing and the per-block trace/progress; the Delta2 relative
+     * error across replicas is tracked and reported as a diagnostic. */
+    long done = 0;
+    double rel = -1.0;
+    int block = cfg.block > 0 ? cfg.block : 20;
+    double last_ckpt = omp_get_wtime();
+    const double CKPT_INTERVAL = 60.0;  /* seconds between checkpoints */
+
+    /* Progress trace: one row per block written to a sibling <out>.trace
+     * file (flushed each block), so the sweeps/Delta2/rel_err trajectory is
+     * captured on disk regardless of stdout buffering. */
+    char tracepath[600];
+    snprintf(tracepath, sizeof tracepath, "%s.trace", outpath);
+    FILE *trace = fopen(tracepath, "w");
+    if (trace) {
+        fprintf(trace, "# convergence trace: N=%d p8=%.4f nt=%d it=%d therm=%ld\n",
+                cfg.N, cfg.p8, cfg.nthreads, cfg.inner, cfg.therm);
+        fprintf(trace, "# sweeps\tDelta2\trel_err\taccept\twall_s\n");
+        fflush(trace);
+    }
+
+    /* Track cumulative Metropolis counts so each block's acceptance (the rate
+     * over just that block's sweeps) can be logged -- shows whether acceptance
+     * drifts as the chain thermalizes. */
+    long prev_prop = 0, prev_acc = 0;
+    metropolis_counts(reps, cfg.nthreads, &prev_prop, &prev_acc);
+
+    /* Optional per-sweep instantaneous Delta2 series (replica 0) for tau. */
+    double *ts = series[0] ? malloc((size_t)cfg.sweeps * sizeof(double)) : NULL;
+
+    /* Optional per-sweep |h_q|^2 along the qx-axis ray q=(j,0), j=1..N (replica
+     * 0), for measuring the per-mode autocorrelation time tau(q). Stored
+     * row-major [sweep*N + (j-1)]. */
+    double *qts = qseries[0] ? malloc((size_t)cfg.sweeps * cfg.N * sizeof(double)) : NULL;
+
+    while (done < cfg.sweeps) {
+        long todo = block;
+        if (done + todo > cfg.sweeps) todo = cfg.sweeps - done;
+        #pragma omp parallel for num_threads(cfg.nthreads) schedule(static, 1)
+        for (int r = 0; r < cfg.nthreads; r++) {
+            Replica *rep = &reps[r];
+            for (long s = 0; s < todo; s++) {
+                replica_sweep(rep, &geo, &cfg);
+                if ((s % cfg.meas_every) == 0) replica_measure(rep, &geo);
+                if (ts && r == 0) ts[done + s] = replica_delta2(rep, &geo);
+                if (qts && r == 0)
+                    for (int j = 1; j <= cfg.N; j++)
+                        qts[(done + s) * cfg.N + (j - 1)] =
+                            replica_mode_abs2(rep, &geo, j, 0);
+            }
+        }
+        done += todo;
+        rel = delta2_rel_error(reps, cfg.nthreads, &geo);
+        double d2m = delta2_mean(reps, cfg.nthreads, &geo);
+        long cp, ca; metropolis_counts(reps, cfg.nthreads, &cp, &ca);
+        double acc_block = (cp > prev_prop) ? (double)(ca - prev_acc) / (cp - prev_prop) : 0.0;
+        prev_prop = cp; prev_acc = ca;
+        if (trace) {
+            fprintf(trace, "%ld\t%.8e\t%.6f\t%.4f\t%.2f\n",
+                    done, d2m, rel, acc_block, omp_get_wtime() - t0);
+            fflush(trace);
+        }
+        if (cfg.verbose)
+            printf("  sweeps=%ld  Delta2=%.6f  Delta2 rel.err=%.4f\n",
+                   done, d2m, rel);
+        else if (show_bar)
+            draw_bar(cfg.therm + done, total_sweeps, omp_get_wtime() - t0, "measure");
+        /* Checkpoint: persist current G so a killed run (e.g. job timeout)
+         * still leaves usable data. Time-gated so fast small-N runs don't
+         * thrash I/O. */
+        if (omp_get_wtime() - last_ckpt > CKPT_INTERVAL) {
+            Result cres = result_reduce(reps, cfg.nthreads, &geo);
+            cres.rel_err = rel;
+            write_result_file(outpath, &cfg, &geo, &cres, L, done,
+                              omp_get_wtime() - t0, or_accept_rate(reps, cfg.nthreads));
+            result_free(&cres);
+            last_ckpt = omp_get_wtime();
+            if (cfg.verbose) printf("  [checkpoint @ %ld sweeps]\n", done);
+        }
+    }
+    if (trace) fclose(trace);
+    if (show_bar) fprintf(stderr, "\n");   /* finalize the progress-bar line */
+    if (ts) {
+        FILE *sf = fopen(series, "w");
+        if (sf) {
+            fprintf(sf, "# per-sweep instantaneous Delta2 (replica 0)  N=%d p8=%.4f "
+                        "nt=%d it=%d therm=%ld\n", cfg.N, cfg.p8, cfg.nthreads,
+                    cfg.inner, cfg.therm);
+            fprintf(sf, "# sweep\tDelta2\n");
+            for (long s = 0; s < done; s++) fprintf(sf, "%ld\t%.10e\n", s, ts[s]);
+            fclose(sf);
+            printf("wrote series %s (%ld sweeps)\n", series, done);
+        }
+        free(ts);
+    }
+    if (qts) {
+        FILE *qf = fopen(qseries, "w");
+        if (qf) {
+            fprintf(qf, "# per-sweep |h_q|^2 along qx-axis ray q=(j,0), j=1..N "
+                        "(replica 0)  N=%d p8=%.4f nt=%d therm=%ld\n",
+                    cfg.N, cfg.p8, cfg.nthreads, cfg.therm);
+            /* column -> |q| map (qmag = a*j for the (j,0) ray) */
+            fprintf(qf, "# qmag:");
+            for (int j = 1; j <= cfg.N; j++) fprintf(qf, " %.8f", geo.a * j);
+            fprintf(qf, "\n# sweep then |h_q|^2 for each column\n");
+            for (long s = 0; s < done; s++) {
+                fprintf(qf, "%ld", s);
+                for (int j = 0; j < cfg.N; j++)
+                    fprintf(qf, "\t%.10e", qts[s * cfg.N + j]);
+                fprintf(qf, "\n");
+            }
+            fclose(qf);
+            printf("wrote qseries %s (%ld sweeps x %d modes)\n", qseries, done, cfg.N);
+        }
+        free(qts);
+    }
+
+    double elapsed = omp_get_wtime() - t0;
+    Result res = result_reduce(reps, cfg.nthreads, &geo);
+    res.sweeps_done = done;
+    res.rel_err = rel;
+
+    printf("\ntime = %.2f s   accept = %.1f%%   samples = %ld   sweeps/replica = %ld\n",
+           elapsed, 100.0 * res.accept_rate, res.total_meas, done);
+    printf("Delta2 rel.err = %.4f\n", res.rel_err);
+    printf("Poisson ratio nu = %.4f +/- %.4f\n", res.poisson, res.poisson_err);
+    if (cfg.overrelax > 0)
+        printf("over-relaxation accept = %.1f%%  (%d OR sweeps / MC sweep)\n",
+               100.0 * or_accept_rate(reps, cfg.nthreads), cfg.overrelax);
+
+    /* ---- write final Green function G(q) and inverse Green G^{-1}(q) --- */
+    write_result_file(outpath, &cfg, &geo, &res, L, done, elapsed,
+                      or_accept_rate(reps, cfg.nthreads));
+    printf("wrote %s\n", outpath);
+    write_accept_file(outpath, &cfg, &geo, reps, L);
+
+    for (int r = 0; r < cfg.nthreads; r++) replica_free(&reps[r]);
+    free(reps);
+    result_free(&res);
+    geometry_free(&geo);
+    return 0;
+}
