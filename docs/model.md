@@ -1,9 +1,7 @@
 # The Model, the Algorithm, and How We Accelerate It
 
-This document summarizes the physics simulated by `brane`, the Fourier Monte
-Carlo (FMC) algorithm it uses, and the concrete plan for modernizing and
-accelerating the code. Every non-obvious claim carries a source; full
-references are collected at the end.
+This document summarizes the physical model, the Fourier Monte
+Carlo (FMC) algorithm it uses, and describes the code.
 
 ---
 
@@ -11,14 +9,12 @@ references are collected at the end.
 
 `brane` simulates a **two-dimensional crystalline (tethered) membrane** — the
 continuum model of graphene and similar atomically-thin crystals — in its
-**flat phase** at finite temperature. The membrane is parametrized by
-`r(x) = (x + u(x), h(x))`, with in-plane phonons `u` and out-of-plane height
-`h` over a 2D base lattice `x` [thesis `chapters/model.tex`; Nelson, Piran &
-Weinberg 2004, ch. 6].
+nearly-flat free-standing configuration at finite temperature. 
+The membrane is parametrized by `r(x) = (x + u(x), h(x))`, 
+with in-plane phonons `u` and out-of-plane height `h` over a 2D base lattice `x` 
+[Nelson, Piran & Weinberg 2004, ch. 6].
 
-The elastic free energy, after expanding in gradients and rescaling, is
-[thesis `model.tex`, eq. `free_energy_r`]:
-
+The elastic free energy, after expanding in gradients and rescaling, is:
 ```
 F[r] = 1/2 ∫ d²x [ κ (∇²h)²
                    + (μ/2)(∂_α r · ∂_β r − δ_αβ)²
@@ -28,15 +24,29 @@ F[r] = 1/2 ∫ d²x [ κ (∇²h)²
 **Why it is interesting.** Thermal fluctuations couple the soft bending modes
 (`κ q⁴`) to in-plane stretching. Integrating out the phonons leaves an
 effective, *strongly interacting* theory for `h` in which the bending rigidity
-is anomalously renormalized: `κ_eff(q) ∼ q^(−η)` as `q → 0`. This "anomalous
-Hooke's law" makes membranes far stiffer against bending at long wavelengths
-than the harmonic theory predicts, and gives a **negative Poisson ratio** in
-the universal regime [thesis `motivation.tex`, `problem.tex`; Le Doussal &
-Radzihovsky 2018 review].
+is anomalously renormalized: `κ_eff(q) ∼ q^(−η)` as `q → 0`. This anomalous
+bending rigidity makes membranes far stiffer against bending at long wavelengths
+than the harmonic theory predicts — thus allowing crystalline membranes to
+disobey the Mermin-Wagner theorem — and gives a **negative Poisson ratio**.
 
-The central critical exponent is **η** (the anomalous elasticity exponent),
-with the accepted value `η ≈ 0.78–0.85`; and the **Poisson ratio `ν`** in the
-zero-stress universal regime, reported around `−0.3` to `−0.76`.
+The behaviour of crystalline membranes on scales larger than the characteristic
+length
+$$
+  L_* \sim \frac{\kappa}{\sqrt{Y_0 T}}
+$$
+is universal, in the sense that the elastic coefficients are material-independent
+[Le Doussal & Radzihovsky 2018 review]. For example, Hooke's law in this regime
+$$
+  \xi \propto \frac{\sigma}{Y_0}\left(\frac{\sigma}{\sigma_*}\right)^{\alpha-1},
+  \qquad
+  \alpha = \frac{\eta}{2-\eta}
+$$
+so η is a critical exponent of the theory. Similarly, the absolute and
+differential Poisson ratios are independent critical indices.
+
+The central critical exponent **η** (the anomalous elasticity exponent) has
+been calculated numerically by different methods and is believed to be
+around η ≈ `0.76–0.80`.
 
 ### 1.1 Effective Fourier action actually simulated
 
