@@ -234,8 +234,8 @@ int main(int argc, char *argv[]) {
     Config cfg = default_config();
     char outpath[512] = {0};
     char outdir[400] = "data";      /* base dir; descriptive subpath appended */
-    char series[400] = {0};         /* optional: per-sweep Delta2 series (tau) */
-    char qseries[400] = {0};        /* optional: per-sweep |h_q|^2 ray (tau(q)) */
+    char series[600] = {0};         /* per-sweep Delta2 series (replica 0)      */
+    char qseries[600] = {0};        /* per-sweep |h_q|^2 ray (replica 0)        */
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(&cfg); return 0; }
@@ -302,6 +302,14 @@ int main(int argc, char *argv[]) {
             if (system(cmd)) { /* ignore */ }
         }
     }
+
+    /* Per-sweep diagnostic logs (replica 0) are written for EVERY run, as
+     * siblings of the .dat, unless an explicit series=/qseries= path was given:
+     *   <out>.series   per-sweep Delta2
+     *   <out>.qseries  per-sweep |h_q|^2 along the qx-axis ray q=(j,0)
+     * (join .trace + .accept, which are already always written). */
+    if (!series[0])  snprintf(series,  sizeof series,  "%s.series",  outpath);
+    if (!qseries[0]) snprintf(qseries, sizeof qseries, "%s.qseries", outpath);
 
     Replica *reps = calloc((size_t)cfg.nthreads, sizeof(Replica));
     double t0 = omp_get_wtime();

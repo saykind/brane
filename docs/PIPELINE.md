@@ -18,18 +18,19 @@ Replica-parallel Fourier Monte Carlo. Key options (`./brane -h`):
 | `overrelax` | over-relaxation sweeps interleaved per Metropolis sweep (`0`=off) — decorrelation, see below |
 | `outdir` | base dir; engine builds the descriptive path (below) |
 | `out` | explicit output path (overrides `outdir`) |
-| `series` | write per-sweep instantaneous Δ₂ (replica 0) for τ measurement |
-| `qseries` | write per-sweep \|h_q\|² along the qx-axis ray (replica 0) for per-mode τ(q) |
+| `series` | override path for the per-sweep Δ₂ log (default `<out>.series`) |
+| `qseries` | override path for the per-sweep \|h_q\|² ray log (default `<out>.qseries`) |
 
 Defaults: `therm=300` (matches legacy), `sweeps=2000`. Runs are **fixed-length**;
 the Δ₂ relative error across replicas is tracked as a diagnostic (`rel_err` in the
 header + `<out>.trace`), not used to stop early.
 
 **Robustness:** output is written atomically (temp+rename) and **checkpointed
-every 60 s**, so a killed run keeps its latest data. A per-block progress
-trace is written to `<out>.trace` (sweeps, Δ₂, rel_err, **accept**, wall_s) and
-a per-mode Metropolis acceptance map to `<out>.accept` (`q1 q2 qmag proposed
-accepted rate`).
+every 60 s**, so a killed run keeps its latest data. Every run also writes four
+sibling diagnostic logs: `<out>.trace` (per-block sweeps, Δ₂, rel_err,
+**accept**, wall_s), `<out>.accept` (per-mode Metropolis acceptance,
+`q1 q2 qmag proposed accepted rate`), `<out>.series` (per-sweep Δ₂, replica 0),
+and `<out>.qseries` (per-sweep \|h_q\|² along the qx-axis ray, replica 0).
 
 ### Step size & acceptance (Tröster OFMC)
 
@@ -68,7 +69,7 @@ crossover.
    down). Our momentum-dependent step already removes that; at worst the slowest
    modes now move a touch too aggressively.
 3. **The number that actually decides this is τ(q), not the acceptance** — and
-   it has now been **measured** (`qseries=` + `tools/tau_q.py`). OFMC's real goal
+   it was **measured**. OFMC's real goal
    is *uniform τ(q)*. At N=100, p8=0.4 (3 seeds), **τ(q) is flat at ~1.3–2.6
    sweeps across all |q|, including the lowest mode (τ≈2.6 at |q|=0.03)** — it
    does **not** diverge as q→0. (Contrast Tröster's plain FMC, Fig. 1: ln τ grows
@@ -127,12 +128,9 @@ exponent with plateau). `--all [GLOB]` batch-plots to `plots/<mirror>/`.
 | tool | purpose |
 |---|---|
 | `tools/analyze.py` | per-file & combined η analysis + plots |
-| `tools/autocorr.py` | integrated autocorrelation time τ from a `series=` file |
-| `tools/tau_q.py` | per-mode τ(q) from `qseries=` files (averages over seeds), plots τ vs \|q\| |
-| `tools/plot_acceptance.py` | acceptance vs sweep + vs \|q\| from a run's `.trace`/`.accept` |
-| `tools/study_convergence.py` | error/thermalization vs sweeps from a `.trace` or log |
-| `tools/reformat_legacy.py` | legacy dump → modern format |
+| `tools/explore.py` | η vs N and η vs p8 sweeps |
 | `tools/heatmap.py`, `scaling.py` | grids / finite-size / core scaling |
+| `tools/reformat_legacy.py` | legacy dump → modern format |
 
 ## Cloud
 
@@ -143,7 +141,7 @@ bundle service, then merges into `data/`).
 
 ## Convergence findings (preliminary)
 
-From a single N=100 study (`tools/study_convergence.py`):
+From a single N=100 convergence study:
 - Error early-decay is consistent with 1/√(samples), but the tail is dominated
   by the noisy 4-replica error *estimator* — **not confirmed**. A proper
   multi-seed study (spread of the observable across independent seeds) is needed.

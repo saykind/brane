@@ -2,8 +2,8 @@
 """
 braneio.py -- Shared readers for brane .dat output (header + columns).
 
-Consolidates the parsing that analyze / reformat_legacy / tau_q /
-plot_acceptance each used to re-implement. Two formats exist:
+Consolidates the .dat parsing that analyze / explore / heatmap / reformat_legacy
+each used to re-implement. Two formats exist:
 
 * Modern brane files carry a leading key=value '#' header followed by columns
       q1 q2 qx qy qmag G Gerr Ginv
@@ -60,18 +60,6 @@ def load(path):
         return data[:, 4], data[:, 5], data[:, 6], data[:, 7], header  # qmag,G,Gerr,Ginv
     # backward compat: old 7-column files (no Gerr)
     return data[:, 4], data[:, 5], np.zeros(len(data)), data[:, 6], header
-
-
-def p8_from_header(path, default=None, nbytes=500):
-    """Read p8 from the header of a brane file (.dat/.trace/.accept/qseries).
-    Returns a float, or `default` if not found / unreadable."""
-    try:
-        with open(path) as f:
-            head = f.read(nbytes)
-    except OSError:
-        return default
-    m = re.search(r"p8=([\d.]+)", head)
-    return float(m.group(1)) if m else default
 
 
 # ---- legacy example_data format --------------------------------------------

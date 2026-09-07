@@ -72,8 +72,8 @@ On Linux with GCC no `libomp` is needed: `make CC=gcc`.
   seed=<int>     base RNG seed (reproducible)       (default 12345)
   out=<path>     explicit output .dat path
   outdir=<dir>   base dir; engine builds a descriptive subpath (default data)
-  series=<path>  per-sweep Delta2 series (replica 0) for tau
-  qseries=<path> per-sweep |h_q|^2 ray (replica 0) for per-mode tau(q)
+  series=<path>  override path for the per-sweep Delta2 log (default <out>.series)
+  qseries=<path> override path for the per-sweep |h_q|^2 ray log (default <out>.qseries)
   -v             per-replica progress
   -h             help
 ```
@@ -83,6 +83,11 @@ independent Markov chain seeded by `(seed, replica_index)`, so runs are fully
 reproducible. `it>1` (intra-chain parallelism) helps only at large `N` on
 macOS/libomp and regresses on Linux — keep `it=1` on the cloud (see
 [cloud/SIMCLOUD.md](cloud/SIMCLOUD.md)).
+
+Every run writes, alongside the `.dat`, four sibling diagnostic logs:
+`<out>.trace` (per-block Δ², rel_err, accept, wall_s), `<out>.accept` (per-mode
+Metropolis acceptance), `<out>.series` (per-sweep Δ², replica 0), and
+`<out>.qseries` (per-sweep `|h_q|²` along the `qx`-axis ray, replica 0).
 
 ### Error bars
 
@@ -219,10 +224,6 @@ plus the reality condition `h_{−q} = conj(h_q)`.
 
 ## Benchmark
 
-```bash
-./tools/bench.sh          # legacy vs new, single-mode updates/sec
-```
-
 Representative result at `N=40` on the 16-core M4 Max (raw update throughput,
 directly comparable across parallelization strategies):
 
@@ -284,11 +285,6 @@ tools/
   explore.py        eta vs N and eta vs p8 sweeps
   heatmap.py        2D colormap of eta over the (N, p8) plane
   scaling.py        core-scaling benchmark (table + plot)
-  bench.sh          legacy-vs-new throughput benchmark
-  autocorr.py       integrated autocorrelation time tau from a series= file
-  tau_q.py          per-mode tau(q) from qseries= files
-  plot_acceptance.py  acceptance vs sweep and vs |q| from .trace/.accept
-  study_convergence.py  error/thermalization vs sweeps from a .trace/log
   reformat_legacy.py  legacy dump -> modern .dat format
 docs/
   model.md          physics, algorithm, sources, acceleration roadmap
